@@ -3,7 +3,7 @@
 
 Запрещает агенту:
   - читать и менять файлы с паролями и ключами (.env, *.pem, *.key, id_rsa);
-  - выполнять разрушительные команды: массовое удаление (rm -rf),
+  - выполнять в Bash или PowerShell разрушительные команды: массовое удаление (rm -rf),
     принудительную отправку в GitHub (push --force), сброс изменений (reset --hard),
     удаление базы или схемы (DROP DATABASE / DROP SCHEMA),
     обход проверки перед коммитом (--no-verify, commit -n),
@@ -26,8 +26,12 @@ DANGEROUS = [
     (re.compile(r"\bgit\b.*--no-verify\b", re.I), "обход проверки перед коммитом (--no-verify)"),
     (re.compile(r"\bgit\s+commit\b[^;&|]*\s-[avsqSm]*n[avsqSm]*(?=\s|$)", re.I), "обход проверки перед коммитом (commit -n)"),
     (re.compile(r"\bdrop\s+(database|schema)\b", re.I), "удаление базы данных или схемы"),
-    (re.compile(r"\bRemove-Item\b.*-Recurse", re.I), "массовое удаление (Remove-Item -Recurse)"),
+    (re.compile(r"\bRemove-Item\b[^;|&]*-Recurse", re.I), "массовое удаление (Remove-Item -Recurse)"),
+    (re.compile(r"\b(rd|rmdir)\s+/s\b", re.I), "массовое удаление (rd /s)"),
 ]
+# В PowerShell rm, del, ri, rd, rmdir, erase — псевдонимы Remove-Item; -r, -rec — сокращения -Recurse
+PS_RECURSIVE_DELETE = re.compile(r"(^|[;|&({\s])(?<!git\s)(remove-item|rm|ri|del|erase|rd|rmdir)(\s[^;|&]*)?\s-r(e(c(u(r(se?)?)?)?)?)?\b", re.I)
+SHELL_TOOLS = ("Bash", "PowerShell")
 DB_CLIENT = re.compile(r"\b(psql|sqlite3|mysql|sqlcmd|pgcli)\b|\bpython[\w.]*\s+-c\b", re.I)
 DB_WRITE = re.compile(r"\b(update\s+\S+\s+set|delete\s+from|insert\s+into|alter\s+table|create\s+(table|index|view|schema)|"
                       r"drop\s+(table|index|view)|truncate)\b", re.I)
@@ -69,10 +73,12 @@ def main():
     if tool in ("Read", "Edit", "Write", "MultiEdit") and is_secret_file(inp.get("file_path")):
         deny("доступ к файлу с паролями или ключами")
 
-    if tool == "Bash":
+    if tool in SHELL_TOOLS:
         cmd = inp.get("command", "")
         if is_rm_rf(cmd):
             deny("массовое удаление (rm -rf)")
+        if tool == "PowerShell" and PS_RECURSIVE_DELETE.search(cmd):
+            deny("массовое удаление (Remove-Item -Recurse)")
         for pattern, what in DANGEROUS:
             if pattern.search(cmd):
                 deny(what)
