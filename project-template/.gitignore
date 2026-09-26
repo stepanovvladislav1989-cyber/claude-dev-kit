@@ -1,0 +1,31 @@
+# Пароли и ключи — никогда в git
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Реальные данные и резервные копии — только локально
+data/
+backups/
+exports/
+*.dump
+*.backup
+
+# Служебное Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Служебное Claude Code
+.claude/.stop_attempts
+.claude/.review_ok
+.claude/PAUSE
+.claude/settings.local.json
+
+# Прочее
+node_modules/
+.DS_Store
+Thumbs.db

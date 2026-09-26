@@ -1,0 +1,11 @@
+# Перед каждым коммитом запускается общая проверка проекта.
+# Если она НЕ ПРОШЛА — коммит не создаётся, сломанный код в git не попадает.
+repos:
+  - repo: local
+    hooks:
+      - id: validate
+        name: Проверка проекта (validate)
+        entry: python scripts/validate.py
+        language: system
+        pass_filenames: false
+        always_run: true

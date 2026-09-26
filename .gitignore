@@ -1,0 +1,12 @@
+# Архив, из которого собран этот репозиторий — содержимое уже здесь в виде файлов
+claude-dev-kit.zip
+
+# Служебное Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+.DS_Store
+Thumbs.db

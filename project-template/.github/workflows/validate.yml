@@ -1,0 +1,21 @@
+# Проверка на сервере GitHub при каждой отправке кода — вторая линия защиты.
+# Результат виден на GitHub: зелёная галочка — ПРОШЛО, красный крестик — НЕ ПРОШЛО.
+# Если в проекте есть база данных — скилл design дополняет этот файл (поднимает тестовую базу).
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Установка библиотек (точные версии из requirements.txt)
+        run: pip install -r requirements.txt
+      - name: Проверка проекта
+        run: python scripts/validate.py

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python C:/Users/ИМЯ/.claude/hooks/guard.py" }
+        ]
+      }
+    ]
+  }
+}
