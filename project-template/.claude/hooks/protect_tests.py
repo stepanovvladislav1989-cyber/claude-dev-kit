@@ -29,9 +29,11 @@ CONFIG = (".claude/hooks/", ".claude/settings.json", ".claude/.protected_approve
 PROTECTED_PATH = re.compile(r"tests/(acceptance|e2e|golden)(/[^\s'\"`;|&()<>]*)?")
 WILDCARD = re.compile(r"[*?\[{]")
 # Команды, которые только читают или запускают — их не останавливаем
+# Интерпретатор: python, python3, py — голый или по полному пути, в том числе в кавычках и через & в PowerShell
+INTERPRETER = r"(&\s*)?(\"[^\"]*/|\S*/)?(python[\d.]*|py)(\.exe)?\"?\s+"
 READ_ONLY = re.compile(
-    r"^\s*(python\s+-m\s+pytest|pytest|python\s+scripts/(validate|mark_reviewed|work_state|check_docs|roadmap)\.py|"
-    r"cat|type|ls|dir|head|tail|grep|rg|find|"
+    r"^\s*(" + INTERPRETER + r"(-m\s+pytest|scripts/(validate|mark_reviewed|work_state|check_docs|roadmap)\.py)|"
+    r"pytest|cat|type|ls|dir|head|tail|grep|rg|find|"
     r"git\s+(diff|log|status|show|add|commit|push)|get-content|gc|get-childitem|gci|select-string|sls|test-path)\b",
     re.I,
 )
@@ -91,7 +93,7 @@ def check(tool, inp):
 
     if tool in SHELL_TOOLS:
         cmd = inp.get("command", "")
-        writes = WRITE_SIGNS.search(HARMLESS_REDIRECTS.sub("", cmd)) or not READ_ONLY.match(cmd)
+        writes = WRITE_SIGNS.search(HARMLESS_REDIRECTS.sub("", cmd)) or not READ_ONLY.match(norm(cmd))
         if touches(cmd, CONFIG) and writes:
             return "Команда может изменить замки или настройки проверки. Проверьте, что она делает.", []
         if touches(cmd, PROTECTED) and writes:
