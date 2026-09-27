@@ -30,6 +30,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_tests.py\""
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

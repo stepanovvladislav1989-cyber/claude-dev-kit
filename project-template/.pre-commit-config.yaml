@@ -1,11 +1,17 @@
-# Перед каждым коммитом запускается общая проверка проекта.
-# Если она НЕ ПРОШЛА — коммит не создаётся, сломанный код в git не попадает.
+# Перед каждым коммитом: общая проверка проекта и отметка ревью.
+# Если проверка НЕ ПРОШЛА или код изменён без отмеченного ревью — коммит не создаётся.
 repos:
   - repo: local
     hooks:
       - id: validate
         name: Проверка проекта (validate)
         entry: python scripts/validate.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: review
+        name: Ревью отмечено для изменённого кода
+        entry: python scripts/work_state.py review
         language: system
         pass_filenames: false
         always_run: true

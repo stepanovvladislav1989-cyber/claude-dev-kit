@@ -22,6 +22,7 @@ venv/
 # Служебное Claude Code
 .claude/.stop_attempts
 .claude/.review_ok
+.claude/.protected_approved
 .claude/PAUSE
 .claude/settings.local.json
 

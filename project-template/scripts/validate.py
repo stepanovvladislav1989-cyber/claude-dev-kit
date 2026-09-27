@@ -28,14 +28,17 @@ CHECKS = [
     ("Сквозные тесты e2e (от данных до результата)",
      [PY, "-m", "pytest", "tests/e2e", "-q", "--no-header", "-p", "no:cacheprovider"], True),
     ("Документы: ссылки и номера", [PY, "scripts/check_docs.py"], False),
+    ("Тесты-приёмки и эталон: изменены только с разрешения", [PY, "scripts/work_state.py", "protected"], False),
 ]
 
 TAIL_LINES = 30  # сколько последних строк вывода показывать при ошибке
 
 
 def count_tests(out):
-    """Из итоговой строки pytest достаёт «зелёных X из Y»."""
-    nums = {k: int(v) for v, k in re.findall(r"(\d+) (passed|failed|error|errors|skipped)", out)}
+    """Из итоговой строки pytest (последней строки с числами) достаёт «зелёных X из Y»."""
+    summary = next((line for line in reversed(out.splitlines())
+                    if re.search(r"\d+ (passed|failed|error|errors|skipped)", line)), "")
+    nums = {k: int(v) for v, k in re.findall(r"(\d+) (passed|failed|error|errors|skipped)", summary)}
     passed = nums.get("passed", 0)
     total = passed + nums.get("failed", 0) + nums.get("error", 0) + nums.get("errors", 0) + nums.get("skipped", 0)
     return passed, total
@@ -52,14 +55,15 @@ def run(cmd, allow_empty):
         return False, "не уложилась в 30 минут", ""
     out = (res.stdout or "") + (res.stderr or "")
     is_pytest = "pytest" in str(cmd)
-    if is_pytest and res.returncode in (4, 5) and ("no tests ran" in out or "not found" in out
-                                                   or "no tests" in out or res.returncode == 5):
+    # Код 5 — pytest не нашёл ни одного теста; код 4 — ошибка запуска, это НЕ «тестов нет»
+    folder_missing = res.returncode == 4 and "file or directory not found" in out
+    if is_pytest and (res.returncode == 5 or folder_missing):
         if allow_empty:
             return True, "тестов пока нет", out
         return False, "тестов не найдено — проверка без тестов не считается пройденной", out
     note = ""
     if is_pytest:
-        passed, total = count_tests(out)
+        passed, total = count_tests(res.stdout or "")
         note = f"зелёных {passed} из {total}"
         if res.returncode == 0 and "skipped" in out:
             note += " (есть пропущенные — проверить почему)"
