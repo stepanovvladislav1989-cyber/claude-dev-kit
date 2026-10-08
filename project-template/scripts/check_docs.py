@@ -13,7 +13,8 @@
 
 Номер считается определённым, если он стоит в начале заголовка:
   ### ПР-07. Выручка по дате подписания акта
-В тестах номер указывают в имени теста или в описании: test_pr07_... или "ПР-07".
+В тестах номер указывают в имени теста: test_pr07_... (Python, имя функции или файла)
+или в названии теста JS/TS: test("ПР-07 …"). Упоминание в комментарии тестом не считается.
 Файлы, имя которых начинается с «_» (шаблоны), не проверяются.
 """
 import re
@@ -44,6 +45,19 @@ def test_files():
     if not tests.exists():
         return []
     return [f for f in tests.rglob("*") if f.is_file() and f.suffix in {".py", ".js", ".ts", ".sql"}]
+
+
+TEST_NAME_RE = re.compile(r"\b(?:def|class)\s+(test\w*)|\b(?:test|it|describe)\s*\(\s*[\"'`]([^\"'`]+)", re.I)
+
+
+def test_names():
+    """Имена тестов и файлов тестов в нижнем регистре — только там номер правила считается покрытым."""
+    names = []
+    for f in test_files():
+        names.append(f.stem)
+        text = f.read_text(encoding="utf-8", errors="replace")
+        names += [a or b for a, b in TEST_NAME_RE.findall(text)]
+    return "\n".join(names).lower()
 
 
 def main():
@@ -86,14 +100,13 @@ def main():
         if id_ not in defined:
             errors.append(f"{id_} упомянут, но нигде не определён: {', '.join(sorted(places))}")
 
-    tests_text = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in test_files())
-    tests_low = tests_text.lower()
+    names = test_names()
     for id_ in sorted(defined):
         prefix, num = id_.split("-")
         if prefix not in ("ПР", "ИНВ"):
             continue
         latin = f"{PREFIXES[prefix]}{num}"
-        if id_ not in tests_text and latin not in tests_low:
+        if not re.search(rf"({re.escape(id_.lower())}|{latin})(?!\d)", names):
             warnings.append(f"У {id_} пока нет теста")
 
     has_tickets = any(t.startswith("Т-") for t in defined)

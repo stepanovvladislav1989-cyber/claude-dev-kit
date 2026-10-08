@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 
+sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данные в UTF-8, Windows по умолчанию читает cp1251
 sys.stderr.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent.parent

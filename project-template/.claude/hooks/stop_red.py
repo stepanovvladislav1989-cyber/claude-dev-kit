@@ -9,12 +9,15 @@
   - в проекте есть scripts/validate.py.
 
 Подтверждение ревью — файл .claude/.review_ok с отпечатком изменённого кода и тестов,
-его создаёт scripts/mark_reviewed.py в конце скилла review. Если файла нет или
-код изменился после отметки — считаем, что ревью для этих изменений не было,
+его ставит замок scripts/mark_reviewed.py, когда reviewer ответил без «критично».
+Если файла нет или код изменился после отметки — считаем, что ревью для этих изменений не было,
 и не даём закончить. Логика «что изменено» и отпечаток — в scripts/work_state.py.
 
 Защита от бесконечного цикла: после MAX_ATTEMPTS попыток подряд агента отпускают,
 а вам показывается предупреждение «работа НЕ готова».
+
+Вопрос вам: если в последнем ответе агента есть строка «Нужно от меня:» (решение по стоп-листу),
+хук не гоняет его по кругу, а отпускает и показывает вам, что работа не готова и ждёт решения.
 
 Пауза: если по вашей команде создан файл .claude/PAUSE, хук не блокирует,
 но показывает вам напоминание, что тесты могут быть красными и ревью не подтверждено.
@@ -24,6 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данные в UTF-8, Windows по умолчанию читает cp1251
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
@@ -32,11 +36,43 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import work_state  # noqa: E402
 
 MAX_ATTEMPTS = 3
+QUESTION_MARK = "нужно от меня:"
 
 
 def notify_user(text):
     print(json.dumps({"systemMessage": text}))
     sys.exit(0)
+
+
+def last_assistant_text(data):
+    """Текст последнего ответа агента: из поля события или из журнала сессии."""
+    if isinstance(data.get("last_assistant_message"), str):
+        return data["last_assistant_message"]
+    path = data.get("transcript_path")
+    if not path or not Path(path).is_file():
+        return ""
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in reversed(lines[-200:]):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        content = (entry.get("message") or {}).get("content")
+        if isinstance(content, str):
+            texts = [content]
+        else:
+            texts = [c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+        if entry.get("type") == "user" and texts:
+            return ""  # дошли до сообщения пользователя — в этом ходе агент вопроса не задал
+        if entry.get("type") == "assistant" and texts:
+            return "\n".join(texts)
+    return ""
+
+
+def asks_user(data):
+    """Агент задал вопрос по стоп-листу: строка ответа начинается с «Нужно от меня:»."""
+    return any(line.replace("*", "").strip().lstrip("#>-• ").lower().startswith(QUESTION_MARK)
+               for line in last_assistant_text(data).splitlines())
 
 
 def main():
@@ -61,6 +97,11 @@ def main():
         counter.unlink(missing_ok=True)
         sys.exit(0)
 
+    if asks_user(data):
+        counter.unlink(missing_ok=True)
+        reason = "проверка НЕ ПРОШЛА" if not validate_ok else "ревью не подтверждено"
+        notify_user(f"Агент ждёт вашего решения (блок «Нужно от меня»). Работа не готова: {reason}.")
+
     attempts += 1
     if attempts > MAX_ATTEMPTS:
         counter.unlink(missing_ok=True)
@@ -79,8 +120,8 @@ def main():
         message = (
             f"Проверка ПРОШЛА, но ревью субагентом reviewer для текущих изменений не подтверждено "
             f"(попытка {attempts} из {MAX_ATTEMPTS}). Завершать работу нельзя.\n"
-            "Запусти скилл review (субагент reviewer), исправь критичные замечания, затем "
-            "python scripts/mark_reviewed.py — и только после этого заканчивай."
+            "Запусти скилл review (субагент reviewer, не в фоне). Отметку ставит замок, когда reviewer "
+            "ответил без «критично»; после исправлений запусти reviewer снова."
         )
     print(message, file=sys.stderr)
     sys.exit(2)

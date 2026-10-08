@@ -9,6 +9,7 @@
 Тесты считаются отдельно: логика (всё в tests/, кроме e2e) и сквозные e2e (tests/e2e/),
 с числом зелёных тестов — чтобы в отчёте было видно «сколько из скольких».
 """
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
+# Проверки пишут по-русски в UTF-8 — иначе в консоли Windows сообщения превращаются в «кракозябры»
+ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 # Проверки: (название для человека, команда, можно ли «тестов нет»).
 # Команда — список (запуск без оболочки) или строка (запуск через оболочку).
@@ -48,7 +51,7 @@ def run(cmd, allow_empty):
     """Запускает одну проверку. Возвращает (прошла ли, пояснение, вывод)."""
     try:
         res = subprocess.run(cmd, cwd=ROOT, shell=isinstance(cmd, str), capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", timeout=1800)
+                             text=True, encoding="utf-8", errors="replace", timeout=1800, env=ENV)
     except FileNotFoundError as e:
         return False, "команда не найдена", str(e)
     except subprocess.TimeoutExpired:

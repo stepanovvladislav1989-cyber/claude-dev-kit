@@ -10,6 +10,12 @@
                                             изменён без разрешения пользователя (любым способом);
   python scripts/work_state.py review     — НЕ ПРОШЛО, если изменён код, а ревью для него не отмечено
                                             (проверка перед коммитом).
+  python scripts/work_state.py ci <коммит> — для проверки на GitHub: НЕ ПРОШЛО, если с указанного коммита
+                                            изменены существующие тесты-приёмки или эталон, а ни в одном
+                                            сообщении коммита нет строки APPROVAL_LINE. Ловит обход
+                                            проверки на компьютере: правка теста видна на GitHub.
+                                            Строку пишет агент — она не доказывает разрешение,
+                                            но делает правку заявленной, а не тихой.
 """
 import hashlib
 import subprocess
@@ -21,6 +27,7 @@ PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 REVIEW_FREE = ("docs/", ".claude/")
 MARKER = ROOT / ".claude" / ".review_ok"
 APPROVED = ROOT / ".claude" / ".protected_approved"
+APPROVAL_LINE = "Разрешено пользователем: защищённые тесты"
 
 
 def git(*args):
@@ -128,11 +135,29 @@ def main():
     elif mode == "review":
         if code_changed() and not review_confirmed():
             print("Коммит остановлен: код изменён, а ревью субагентом reviewer для этих изменений не отмечено.")
-            print("Запусти скилл review, затем python scripts/mark_reviewed.py — и коммить снова.")
+            print("Запусти скилл review: отметку ставит замок, когда reviewer ответил без «критично».")
             print("Если ревью было: закоммить все изменения задачи целиком (git add -A) — частичный коммит не совпадёт с отметкой.")
             sys.exit(1)
+    elif mode == "ci":
+        base = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not base or set(base) == {"0"}:
+            print("Нет предыдущего коммита для сравнения — проверка защищённых тестов пропущена.")
+            return
+        if subprocess.run(["git", "cat-file", "-e", f"{base}^{{commit}}"], cwd=ROOT).returncode != 0:
+            print(f"Не удалось проверить защищённые тесты: коммит {base} не найден в истории "
+                  "(например, после принудительной отправки).")
+            sys.exit(1)
+        changed = [p for p in git("diff", base, "HEAD", "--name-only", "--no-renames", "--diff-filter=MDT",
+                                  "-z", "--", *PROTECTED).split("\0") if p]
+        if changed and APPROVAL_LINE not in git("log", "--format=%B", f"{base}..HEAD"):
+            print("Изменены существующие тесты-приёмки или эталон, а в сообщении коммита нет строки")
+            print(f"«{APPROVAL_LINE}»:")
+            for path in changed:
+                print(f"  - {path}")
+            sys.exit(1)
+        print("Защищённые тесты и эталон не тронуты или изменены с отметкой о разрешении.")
     else:
-        print("Использование: python scripts/work_state.py protected | review")
+        print("Использование: python scripts/work_state.py protected | review | ci <коммит>")
         sys.exit(2)
 
 
