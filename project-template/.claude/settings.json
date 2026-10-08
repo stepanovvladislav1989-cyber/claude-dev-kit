@@ -28,6 +28,15 @@
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_tests.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/model_router.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -48,6 +57,16 @@
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_red.py\"",
             "timeout": 900
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.py\""
           }
         ]
       }

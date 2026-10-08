@@ -8,6 +8,8 @@
 
 Предупреждения (проверку не валят):
   4. У правила ПР или инварианта ИНВ пока нет ни одного теста.
+  5. На требование ТР не ссылается ни одна задача (когда задачи уже нарезаны).
+  6. В документе остался маркер [УТОЧНИТЬ: …] — открытый вопрос к пользователю.
 
 Номер считается определённым, если он стоит в начале заголовка:
   ### ПР-07. Выручка по дате подписания акта
@@ -27,6 +29,7 @@ ID_RE = re.compile(r"(?<![\w-])(ТР|ПР|ИНВ|Т|Р)-(\d{2,4})(?![\w])")
 HEAD_RE = re.compile(r"^#{1,6}\s+(ТР|ПР|ИНВ|Т|Р)-(\d{2,4})\b")
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 FENCE_RE = re.compile(r"```.*?```", re.S)
+CLARIFY_RE = re.compile(r"\[УТОЧНИТЬ:")
 
 
 def doc_files():
@@ -47,6 +50,7 @@ def main():
     errors, warnings = [], []
     defined = defaultdict(list)   # номер -> где определён
     referenced = defaultdict(set) # номер -> где упомянут
+    in_tickets = set()            # номера, на которые ссылаются задачи
 
     for f in doc_files():
         rel = f.relative_to(ROOT).as_posix()
@@ -60,6 +64,12 @@ def main():
 
         for m in ID_RE.finditer(body):
             referenced[f"{m.group(1)}-{m.group(2)}"].add(rel)
+            if rel.startswith("docs/tickets/"):
+                in_tickets.add(f"{m.group(1)}-{m.group(2)}")
+
+        clarify = len(CLARIFY_RE.findall(body))
+        if clarify:
+            warnings.append(f"В {rel} открытых вопросов [УТОЧНИТЬ]: {clarify}")
 
         for target in LINK_RE.findall(body):
             if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -85,6 +95,11 @@ def main():
         latin = f"{PREFIXES[prefix]}{num}"
         if id_ not in tests_text and latin not in tests_low:
             warnings.append(f"У {id_} пока нет теста")
+
+    has_tickets = any(t.startswith("Т-") for t in defined)
+    for id_ in sorted(defined):
+        if has_tickets and id_.startswith("ТР-") and id_ not in in_tickets:
+            warnings.append(f"На {id_} не ссылается ни одна задача")
 
     for e in errors:
         print(f"ОШИБКА: {e}")

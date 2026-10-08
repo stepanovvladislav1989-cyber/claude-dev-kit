@@ -4,7 +4,9 @@
 Запрещает агенту:
   - читать и менять файлы с паролями и ключами (.env, *.pem, *.key, id_rsa);
   - выполнять в Bash или PowerShell разрушительные команды: массовое удаление (rm -rf),
-    принудительную отправку в GitHub (push --force), сброс изменений (reset --hard),
+    принудительную отправку в GitHub (push --force), сброс изменений (reset --hard,
+    git checkout/restore всей папки, git checkout/switch --force или --discard-changes, git clean -f;
+    git restore --staged . разрешён — он рабочие файлы не трогает),
     удаление базы или схемы (DROP DATABASE / DROP SCHEMA),
     обход проверки перед коммитом (--no-verify, commit -n),
     изменение данных или структуры базы разовой командой в терминале
@@ -54,6 +56,38 @@ def is_rm_rf(cmd):
     return False
 
 
+WHOLE_TREE = {".", "./", ":/", ":/.", "*"}
+
+
+def git_discard(cmd):
+    """Команда git, стирающая несохранённую работу целиком: clean -f, checkout/restore всей папки,
+    checkout/switch с -f, --force, --discard-changes. Возвращает описание или None."""
+    for part in re.split(r"[;&|\n]+", cmd):
+        tokens = [t.strip("'\"") for t in part.split()]
+        # git, git.exe или полный путь к нему
+        start = next((i for i, t in enumerate(tokens) if re.search(r"(^|[/\\])git(\.exe)?$", t, re.I)), None)
+        if start is None:
+            continue
+        rest = tokens[start + 1:]
+        while rest and rest[0].startswith("-"):  # общие флаги до команды: -C <папка>, -c ключ=значение, --no-pager …
+            rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+        if not rest:
+            continue
+        sub, args = rest[0].lower(), rest[1:]
+        if sub == "clean" and any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a)
+                                  for a in args):
+            return "удаление всех новых несохранённых файлов (git clean --force)"
+        if sub in ("checkout", "switch") and any(a in ("--force", "--discard-changes") or
+                                                 (a.startswith("-") and not a.startswith("--") and "f" in a)
+                                                 for a in args):
+            return "отмена всех несохранённых изменений (git checkout/switch --force)"
+        if sub in ("checkout", "restore") and WHOLE_TREE & set(args):
+            if sub == "restore" and ("--staged" in args or "-S" in args) and not ("--worktree" in args or "-W" in args):
+                continue  # убирает файлы из подготовки к коммиту, рабочие файлы не трогает
+            return "отмена всех несохранённых изменений (git checkout/restore .) — возвращай файлы по одному"
+    return None
+
+
 def is_secret_file(path):
     name = PurePath((path or "").replace("\\", "/")).name
     return bool(name) and name.lower() != ".env.example" and bool(SECRET_NAME.search(name))
@@ -77,6 +111,9 @@ def main():
         cmd = inp.get("command", "")
         if is_rm_rf(cmd):
             deny("массовое удаление (rm -rf)")
+        discard = git_discard(cmd)
+        if discard:
+            deny(discard)
         if tool == "PowerShell" and PS_RECURSIVE_DELETE.search(cmd):
             deny("массовое удаление (Remove-Item -Recurse)")
         for pattern, what in DANGEROUS:
