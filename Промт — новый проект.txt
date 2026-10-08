@@ -13,7 +13,7 @@
 Дальше по шагам:
 1. Распакуй шаблон в эту папку.
 2. Сделай git init и первый коммит.
-3. Создай новый приватный репозиторий на GitHub под именем папки и отправь туда код.
+3. Создай новый приватный репозиторий на GitHub под именем папки и отправь туда код. Включи в нём Dependabot alerts: gh api -X PUT repos/<владелец>/<репозиторий>/vulnerability-alerts.
 4. Установи зависимости (pip install -r requirements.txt) и pre-commit (pre-commit install).
 5. Запусти python scripts/validate.py, должно быть ПРОШЛО.
 6. Запусти /new-project.
