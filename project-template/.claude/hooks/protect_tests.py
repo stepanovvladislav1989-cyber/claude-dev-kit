@@ -6,7 +6,7 @@
 Изменение или удаление СУЩЕСТВУЮЩИХ — только с разрешения пользователя:
 Claude Code покажет запрос, и решение за вами. Любая правка замков и настроек
 проверки (CONFIG) — тоже только с разрешения; сюда же входят отметка ревью
-(.claude/.review_ok, её ставит только замок по ответу reviewer) и пауза (.claude/PAUSE):
+(.claude/.review_ok, её ставит только замок по ответу reviewer), запомненный итог проверки (.claude/.validate_ok) и пауза (.claude/PAUSE):
 агент не может напрямую сам себе подтвердить ревью или выключить замок stop_red.
 (Защита от пропуска шага, а не от умышленного обхода: обходной код замок не распознает.)
 Чтение и запуск тестов разрешены без вопросов.
@@ -29,16 +29,16 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 # Пути сравниваются в нижнем регистре: ".claude/pause" — это .claude/PAUSE
-CONFIG = (".claude/hooks/", ".claude/settings.json", ".claude/.protected_approved", ".claude/.review_ok",
+CONFIG = (".claude/hooks/", ".claude/settings.json", ".claude/.protected_approved", ".claude/.review_ok", ".claude/.validate_ok",
           ".claude/pause", ".pre-commit-config.yaml", ".github/workflows/", "scripts/validate.py",
-          "scripts/work_state.py", "scripts/mark_reviewed.py", "scripts/check_docs.py", "conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg")
+          "scripts/work_state.py", "scripts/mark_reviewed.py", "scripts/check_docs.py", "scripts/review_diff.py", "conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg")
 PROTECTED_PATH = re.compile(r"tests/(acceptance|e2e|golden)(/[^\s'\"`;|&()<>]*)?")
 WILDCARD = re.compile(r"[*?\[{]")
 # Команды, которые только читают или запускают — их не останавливаем
 # Интерпретатор: python, python3, py — голый или по полному пути, в том числе в кавычках и через & в PowerShell
 INTERPRETER = r"(&\s*)?(\"[^\"]*/|\S*/)?(python[\d.]*|py)(\.exe)?\"?\s+"
 READ_ONLY = re.compile(
-    r"^\s*(" + INTERPRETER + r"(-m\s+pytest|scripts/(validate|work_state|check_docs|roadmap)\.py)|"
+    r"^\s*(" + INTERPRETER + r"(-m\s+pytest|scripts/(validate|work_state|check_docs|roadmap|review_diff)\.py)|"
     r"pytest|cat|type|ls|dir|head|tail|grep|rg|find|"
     r"git\s+(diff|log|status|show|add|commit|push)|get-content|gc|get-childitem|gci|select-string|sls|test-path)\b",
     re.I,

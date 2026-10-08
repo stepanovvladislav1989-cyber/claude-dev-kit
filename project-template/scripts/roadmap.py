@@ -2,12 +2,15 @@
 Дорожная карта проекта: собирается автоматически из файлов задач.
 
 Запуск:  python scripts/roadmap.py   → docs/roadmap.md
+         python scripts/roadmap.py --sample Т-012 — нужна ли выборочная проверка после задачи Т-012
+                                    (каждая 5-я готовая) и какая старая задача выбрана — случайно
 
 Единственный источник статусов — сами задачи (docs/tickets/Т-….md): строки
 «**Статус:** …» и «**Релиз:** 2. Название». Отметка «внедрён» — метка версии в git
 вида release-2 (ставится при приёмке релиза: git tag release-2).
 docs/roadmap.md вручную не правится — он перезаписывается.
 """
+import random
 import re
 import subprocess
 import sys
@@ -64,7 +67,23 @@ def read_tickets():
     return items
 
 
+def sample(current):
+    """Выборочная проверка: число готовых задач делится на 5 — случайная готовая задача, кроме текущей."""
+    done = [i["id"] for i in read_tickets() if i["status"] == "готово"]
+    if not done or len(done) % 5:
+        print(f"Выборочная проверка не нужна: готово {len(done)}, нужна на каждой 5-й.")
+        return
+    older = [t for t in done if t != current]
+    if older:
+        # Случайно, но для одной задачи выбор всегда один и тот же — перезапуском его не поменять
+        print(f"Выборочная проверка: {random.Random(current).choice(older)} (выбрана случайно из {len(older)})")
+
+
 def main():
+    if "--sample" in sys.argv:
+        args = sys.argv[sys.argv.index("--sample") + 1:]
+        sample(args[0] if args else "")
+        return
     items = read_tickets()
     tags = released()
     done = sum(1 for i in items if i["status"] == "готово")

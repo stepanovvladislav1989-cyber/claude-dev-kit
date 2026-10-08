@@ -1,11 +1,12 @@
 # Перед каждым коммитом: общая проверка проекта и отметка ревью.
+# --if-changed: если код и тесты не менялись с последнего ПРОШЛО, тесты не прогоняются повторно.
 # Если проверка НЕ ПРОШЛА или код изменён без отмеченного ревью — коммит не создаётся.
 repos:
   - repo: local
     hooks:
       - id: validate
         name: Проверка проекта (validate)
-        entry: python scripts/validate.py
+        entry: python scripts/validate.py --if-changed
         language: system
         pass_filenames: false
         always_run: true

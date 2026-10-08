@@ -3,6 +3,7 @@
 
   - что изменено с последнего коммита (от git add не зависит);
   - отпечаток изменений для отметки ревью (только код и тесты — правка документов его не сбивает);
+  - отпечаток состояния, чтобы validate --if-changed не прогонял тесты повторно, если код и тесты не менялись;
   - какие существующие тесты-приёмки и эталон изменены и разрешил ли их менять пользователь.
 
 Запуск из командной строки:
@@ -18,6 +19,7 @@
                                             но делает правку заявленной, а не тихой.
 """
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 REVIEW_FREE = ("docs/", ".claude/")
 MARKER = ROOT / ".claude" / ".review_ok"
+VALIDATED = ROOT / ".claude" / ".validate_ok"  # отпечаток состояния и итог последней проверки ПРОШЛО
 APPROVED = ROOT / ".claude" / ".protected_approved"
 APPROVAL_LINE = "Разрешено пользователем: защищённые тесты"
 
@@ -70,6 +73,31 @@ def changes_hash():
     digest = hashlib.sha256()
     for path in changed_paths():
         if not needs_review(path):
+            continue
+        file_path = ROOT / path
+        content = file_path.read_bytes().replace(b"\r\n", b"\n") if file_path.is_file() else b"<no file>"
+        digest.update(path.encode("utf-8") + b"\0" + content + b"\0")
+    return digest.hexdigest()
+
+
+def is_doc(path):
+    """Документ (.md в docs/ или в корне): правка не влияет на тесты, документы validate проверяет всегда."""
+    return path.endswith(".md") and (path.startswith("docs/") or "/" not in path)
+
+
+def state_hash():
+    """Отпечаток состояния для запоминания ПРОШЛО: последний коммит, все изменённые файлы, кроме документов,
+    файл .env и адреса баз. None — git не сработал: тогда запоминать и сравнивать нельзя."""
+    res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=ROOT, capture_output=True)
+    if res.returncode != 0:
+        return None
+    digest = hashlib.sha256(head().encode())
+    env_file = ROOT / ".env"
+    digest.update(env_file.read_bytes() if env_file.is_file() else b"<no .env>")
+    for name in ("DATABASE_URL", "TEST_DATABASE_URL"):
+        digest.update(f"{name}={os.environ.get(name, '')}\0".encode("utf-8"))
+    for path in changed_paths():
+        if is_doc(path):
             continue
         file_path = ROOT / path
         content = file_path.read_bytes().replace(b"\r\n", b"\n") if file_path.is_file() else b"<no file>"

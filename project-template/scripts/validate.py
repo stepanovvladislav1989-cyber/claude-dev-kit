@@ -1,7 +1,14 @@
 """
 Единая проверка проекта. Одна команда — один вердикт: ПРОШЛО или НЕ ПРОШЛО.
 
-Запуск:  python scripts/validate.py
+Запуск:  python scripts/validate.py              — полная проверка
+         python scripts/validate.py --if-changed — если с последнего ПРОШЛО код и тесты не менялись,
+                                                   тесты не прогоняются заново (печатается их прошлый итог),
+                                                   документы и защищённые тесты проверяются всегда. Для замка stop_red,
+                                                   проверки перед коммитом и шага «Проверка» задачи.
+                                                   Не замечает: переустановку библиотек без правки
+                                                   requirements.txt и данные в тестовой базе —
+                                                   после такого запускай без --if-changed.
 
 Что проверяется — список CHECKS ниже. Его настраивает скилл design под стек проекта
 (например, добавляет линтер). Порядок работы от стека не зависит.
@@ -9,11 +16,14 @@
 Тесты считаются отдельно: логика (всё в tests/, кроме e2e) и сквозные e2e (tests/e2e/),
 с числом зелёных тестов — чтобы в отчёте было видно «сколько из скольких».
 """
+import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import work_state
 
 # Вывод русских букв в консоль Windows без ошибок кодировки
 sys.stdout.reconfigure(encoding="utf-8")
@@ -73,13 +83,42 @@ def run(cmd, allow_empty):
     return res.returncode == 0, note, out
 
 
+def remembered(code_state):
+    """Строки итога прошлой проверки ПРОШЛО по названиям проверок, если с тех пор код и тесты
+    не менялись (менялись только документы), иначе {}."""
+    try:
+        saved = json.loads(work_state.VALIDATED.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return saved.get("lines", {}) if code_state and saved.get("code") == code_state else {}
+
+
 def main():
-    results = [(name, *run(cmd, allow_empty)) for name, cmd, allow_empty in CHECKS]
+    code_state = work_state.state_hash()
+    # --if-changed: код и тесты не менялись с последнего ПРОШЛО — тесты не прогоняем, документы проверяем всегда
+    saved = remembered(code_state) if "--if-changed" in sys.argv else {}
+    results = []
+    for name, cmd, allow_empty in CHECKS:
+        if name in saved and "check_docs" not in str(cmd) and "work_state" not in str(cmd):  # быстрые — всегда
+            results.append((name, True, None, ""))
+        else:
+            results.append((name, *run(cmd, allow_empty)))
     ok_all = all(ok for _, ok, _, _ in results)
 
-    print(f"ИТОГ: {'ПРОШЛО' if ok_all else 'НЕ ПРОШЛО'}")
+    lines = {}
     for name, ok, note, _ in results:
-        print(f"  - {name}: {'ПРОШЛО' if ok else 'НЕ ПРОШЛО'}" + (f" — {note}" if note else ""))
+        lines[name] = saved[name] if note is None else \
+            f"  - {name}: {'ПРОШЛО' if ok else 'НЕ ПРОШЛО'}" + (f" — {note}" if note else "")
+    print(f"ИТОГ: {'ПРОШЛО' if ok_all else 'НЕ ПРОШЛО'}")
+    print("\n".join(lines.values()))
+    if any(note is None for _, _, note, _ in results):
+        print("(тесты не прогонялись заново: код и тесты не менялись с прошлой проверки ПРОШЛО)")
+
+    work_state.VALIDATED.unlink(missing_ok=True)
+    if ok_all and code_state and work_state.state_hash() == code_state:  # тесты сами не поменяли код
+        work_state.VALIDATED.parent.mkdir(exist_ok=True)
+        work_state.VALIDATED.write_text(json.dumps({"code": code_state, "lines": lines}, ensure_ascii=False),
+                                        encoding="utf-8")
 
     for name, ok, _, out in results:
         if not ok:

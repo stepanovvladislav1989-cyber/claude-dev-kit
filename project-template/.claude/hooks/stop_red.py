@@ -19,6 +19,13 @@
 Вопрос вам: если в последнем ответе агента есть строка «Нужно от меня:» (решение по стоп-листу),
 хук не гоняет его по кругу, а отпускает и показывает вам, что работа не готова и ждёт решения.
 
+Ваш вопрос: если ваше последнее сообщение — вопрос (кончается на «?»), а агент в этом ходе
+только читал файлы (не правил, не запускал команд и субагентов), он просто ответил — хук отпускает
+с напоминанием, что задача не доделана. Иначе агента заставляли бы чинить код вместо ответа.
+
+Проверка запускается с --if-changed: если код и тесты не менялись с последнего ПРОШЛО,
+тесты повторно не прогоняются.
+
 Пауза: если по вашей команде создан файл .claude/PAUSE, хук не блокирует,
 но показывает вам напоминание, что тесты могут быть красными и ревью не подтверждено.
 """
@@ -44,35 +51,48 @@ def notify_user(text):
     sys.exit(0)
 
 
-def last_assistant_text(data):
-    """Текст последнего ответа агента: из поля события или из журнала сессии."""
-    if isinstance(data.get("last_assistant_message"), str):
-        return data["last_assistant_message"]
+# Только читают. Любой другой инструмент (правка, команда, субагент) — агент мог что-то изменить
+READ_TOOLS = ("Read", "Grep", "Glob", "WebFetch", "WebSearch", "ToolSearch")
+
+
+def last_turn(data):
+    """Последний ход по журналу сессии: (сообщение пользователя или None — не найдено,
+    последний текст агента в этом ходе, менял ли агент что-то в этом ходе)."""
     path = data.get("transcript_path")
     if not path or not Path(path).is_file():
-        return ""
+        return None, "", True
     lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    for line in reversed(lines[-200:]):
+    agent_text, changed = None, False
+    for line in reversed(lines[-500:]):
         try:
             entry = json.loads(line)
         except ValueError:
             continue
+        if entry.get("isSidechain"):  # записи субагентов — не ход пользователя и не ответ агента
+            continue
         content = (entry.get("message") or {}).get("content")
-        if isinstance(content, str):
-            texts = [content]
-        else:
-            texts = [c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
-        if entry.get("type") == "user" and texts:
-            return ""  # дошли до сообщения пользователя — в этом ходе агент вопроса не задал
-        if entry.get("type") == "assistant" and texts:
-            return "\n".join(texts)
-    return ""
+        items = [{"type": "text", "text": content}] if isinstance(content, str) else content or []
+        items = [c for c in items if isinstance(c, dict)]
+        texts = [c.get("text", "") for c in items if c.get("type") == "text"]
+        if entry.get("type") == "assistant":
+            if agent_text is None and texts:
+                agent_text = "\n".join(texts)
+            changed = changed or any(c.get("type") == "tool_use" and c.get("name") not in READ_TOOLS for c in items)
+        elif entry.get("type") == "user" and texts and not entry.get("isMeta"):
+            typed = [t for t in texts if not t.lstrip().startswith("<")]  # без служебных вставок редактора
+            return "\n".join(typed), agent_text or "", changed  # дошли до сообщения пользователя
+    return None, agent_text or "", True
 
 
-def asks_user(data):
+def asks_user(agent_text):
     """Агент задал вопрос по стоп-листу: строка ответа начинается с «Нужно от меня:»."""
     return any(line.replace("*", "").strip().lstrip("#>-• ").lower().startswith(QUESTION_MARK)
-               for line in last_assistant_text(data).splitlines())
+               for line in agent_text.splitlines())
+
+
+def answered_question(user_text, changed):
+    """Пользователь спросил, агент только ответил и ничего не менял."""
+    return user_text is not None and user_text.strip().endswith("?") and not changed
 
 
 def main():
@@ -89,18 +109,25 @@ def main():
 
     attempts = int(counter.read_text()) if data.get("stop_hook_active") and counter.exists() else 0
 
-    res = subprocess.run([sys.executable, "scripts/validate.py"], cwd=ROOT,
+    user_text, agent_text, changed = last_turn(data)
+    if isinstance(data.get("last_assistant_message"), str):
+        agent_text = data["last_assistant_message"]
+    # Вопрос вам или ответ на ваш вопрос — тесты не гоняем: работу доделают после вашего ответа
+    if asks_user(agent_text):
+        counter.unlink(missing_ok=True)
+        notify_user("Агент ждёт вашего решения (блок «Нужно от меня»). Работа не готова: "
+                    "проверка и ревью — после вашего ответа.")
+    if answered_question(user_text, changed):
+        counter.unlink(missing_ok=True)
+        notify_user("Агент ответил на ваш вопрос. Задача не доделана — напишите «продолжить», когда будете готовы.")
+
+    res = subprocess.run([sys.executable, "scripts/validate.py", "--if-changed"], cwd=ROOT,
                          capture_output=True, text=True, encoding="utf-8", errors="replace")
     validate_ok = res.returncode == 0
     review_ok = work_state.review_confirmed() or not work_state.code_changed()
     if validate_ok and review_ok:
         counter.unlink(missing_ok=True)
         sys.exit(0)
-
-    if asks_user(data):
-        counter.unlink(missing_ok=True)
-        reason = "проверка НЕ ПРОШЛА" if not validate_ok else "ревью не подтверждено"
-        notify_user(f"Агент ждёт вашего решения (блок «Нужно от меня»). Работа не готова: {reason}.")
 
     attempts += 1
     if attempts > MAX_ATTEMPTS:

@@ -15,6 +15,9 @@
       "Bash(git push:*)",
       "Bash(python scripts/export_ticket.py:*)",
       "Bash(python scripts/roadmap.py:*)",
+      "Bash(python scripts/review_diff.py:*)",
+      "Bash(python scripts/check_docs.py:*)",
+      "Bash(python scripts/work_state.py:*)",
       "PowerShell(python scripts/validate.py:*)",
       "PowerShell(python -m pytest:*)",
       "PowerShell(pytest:*)",
@@ -27,7 +30,10 @@
       "PowerShell(git commit:*)",
       "PowerShell(git push:*)",
       "PowerShell(python scripts/export_ticket.py:*)",
-      "PowerShell(python scripts/roadmap.py:*)"
+      "PowerShell(python scripts/roadmap.py:*)",
+      "PowerShell(python scripts/review_diff.py:*)",
+      "PowerShell(python scripts/check_docs.py:*)",
+      "PowerShell(python scripts/work_state.py:*)"
     ]
   },
   "hooks": {
