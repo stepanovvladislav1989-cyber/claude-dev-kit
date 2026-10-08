@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Read|Edit|Write|MultiEdit",
+        "matcher": "Bash|PowerShell|Read|Edit|Write|MultiEdit|Grep",
         "hooks": [
           { "type": "command", "command": "python C:/Users/ИМЯ/.claude/hooks/guard.py" }
         ]
