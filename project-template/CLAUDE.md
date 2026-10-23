@@ -6,6 +6,7 @@
 
 ## Документы — единственные источники
 
+- Бриф заказчика дословно: [brief.md](docs/brief.md)
 - Что и зачем: [requirements.md](docs/requirements.md)
 - Как устроено: [design.md](docs/design.md)
 - Правила, инварианты, глоссарий: [rules.md](docs/rules.md)
