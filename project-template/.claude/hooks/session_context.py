@@ -5,11 +5,16 @@
 Текущая задача — файл в docs/tickets/ со статусом «в работе», а если такой нет — «пауза».
 Агенту передаются: путь к файлу задачи, статус и раздел «Где остановились».
 Нет такой задачи — хук молчит.
+
+Заодно пересобирает дашборд (scripts/dashboard.py) с событием «новая сессия» — кроме сжатия
+контекста, это продолжение работы; ошибка дашборда глушится.
 """
+import json
 import re
 import sys
 from pathlib import Path
 
+sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данные в UTF-8, Windows по умолчанию читает cp1251
 sys.stdout.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,7 +31,22 @@ def journal(text):
     return body.split("\n## ", 1)[0].strip()[-MAX_CHARS:]
 
 
+def show_on_dashboard():
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import dashboard
+        dashboard.update("session", "Новая сессия")
+    except Exception:
+        pass
+
+
 def main():
+    try:
+        source = "" if sys.stdin.isatty() else json.load(sys.stdin).get("source", "")
+    except (ValueError, AttributeError, OSError):
+        source = ""
+    if source != "compact":  # сжатие контекста посреди работы — не новая сессия
+        show_on_dashboard()
     if not TICKETS.is_dir():
         return
     files = []

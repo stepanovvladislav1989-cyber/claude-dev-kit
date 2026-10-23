@@ -75,6 +75,39 @@ def test_names():
     return "\n".join(names).lower()
 
 
+def tr_sections_of(body):
+    """ТР документа -> текст его раздела: до заголовка того же или старшего уровня
+    (подзаголовок внутри ТР раздел не обрывает). Общая функция для check_docs и дашборда."""
+    sections, current, tr_level = {}, None, 0
+    for line in body.splitlines():
+        m = HEAD_RE.match(line)
+        level = len(line) - len(line.lstrip("#"))
+        if m and m.group(1) == "ТР":
+            current, tr_level = f"ТР-{m.group(2)}", level
+            sections[current] = ""
+        elif level and level <= tr_level:
+            current, tr_level = None, 0
+        elif current:
+            sections[current] += line + "\n"
+    return sections
+
+
+def ticket_trs(body):
+    """ТР из поля «Требования» задачи."""
+    field = TICKET_TR_RE.search(body)
+    return [f"ТР-{n}" for p, n in ID_RE.findall(field.group(1)) if p == "ТР"] if field else []
+
+
+def brief_ids(body):
+    """Номера абзацев брифа («Б-1», …)."""
+    return [f"Б-{m.group(1)}" for line in body.splitlines() if (m := BRIEF_HEAD_RE.match(line))]
+
+
+def brief_refs(body):
+    """Упомянутые в документе абзацы брифа."""
+    return {f"Б-{n}" for n in BRIEF_RE.findall(body)}
+
+
 def main():
     errors, warnings = [], []
     defined = defaultdict(list)   # номер -> где определён
@@ -90,17 +123,14 @@ def main():
         body = FENCE_RE.sub("", text)  # примеры в блоках кода не считаем
 
         if rel == BRIEF:
-            for line in body.splitlines():
-                m = BRIEF_HEAD_RE.match(line)
-                if m:
-                    defined[f"Б-{m.group(1)}"].append(rel)
+            for id_ in brief_ids(body):
+                defined[id_].append(rel)
             continue
 
         if has_brief:  # без брифа «Б-2» — скорее корпус или форма, а не абзац
-            for m in BRIEF_RE.finditer(body):
-                referenced[f"Б-{m.group(1)}"].add(rel)
+            for id_ in brief_refs(body):
+                referenced[id_].add(rel)
 
-        current_tr, tr_level = None, 0
         ticket_id = None
         for line in body.splitlines():
             m = HEAD_RE.match(line)
@@ -108,18 +138,10 @@ def main():
                 defined[f"{m.group(1)}-{m.group(2)}"].append(rel)
                 if m.group(1) == "Т" and not ticket_id:
                     ticket_id = f"Т-{m.group(2)}"
-            level = len(line) - len(line.lstrip("#"))
-            if m and m.group(1) == "ТР":
-                current_tr, tr_level = f"ТР-{m.group(2)}", level
-                tr_sections[current_tr] = ""
-            elif level and level <= tr_level:  # подзаголовок внутри ТР раздел не обрывает
-                current_tr, tr_level = None, 0
-            elif current_tr:
-                tr_sections[current_tr] += line + "\n"
+        tr_sections.update(tr_sections_of(body))
 
         if rel.startswith("docs/tickets/") and ticket_id:
-            field = TICKET_TR_RE.search(body)
-            trs = [f"ТР-{n}" for p, n in ID_RE.findall(field.group(1)) if p == "ТР"] if field else []
+            trs = ticket_trs(body)
             in_tickets.update(trs)
             if not trs:
                 tickets_without_tr.append(ticket_id)

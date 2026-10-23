@@ -18,6 +18,7 @@
       "Bash(python scripts/review_diff.py:*)",
       "Bash(python scripts/check_docs.py:*)",
       "Bash(python scripts/work_state.py:*)",
+      "Bash(python scripts/dashboard.py:*)",
       "PowerShell(python scripts/validate.py:*)",
       "PowerShell(python -m pytest:*)",
       "PowerShell(pytest:*)",
@@ -33,13 +34,14 @@
       "PowerShell(python scripts/roadmap.py:*)",
       "PowerShell(python scripts/review_diff.py:*)",
       "PowerShell(python scripts/check_docs.py:*)",
-      "PowerShell(python scripts/work_state.py:*)"
+      "PowerShell(python scripts/work_state.py:*)",
+      "PowerShell(python scripts/dashboard.py:*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|Bash|PowerShell",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

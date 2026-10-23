@@ -28,6 +28,9 @@
 
 Пауза: если по вашей команде создан файл .claude/PAUSE, хук не блокирует,
 но показывает вам напоминание, что тесты могут быть красными и ревью не подтверждено.
+
+Дашборд: когда агент заканчивает ответ (хук его отпускает), страница exports/dashboard.html
+пересобирается — с вопросом вам, если он есть (scripts/dashboard.py). Ошибка дашборда работу не ломает.
 """
 import json
 import subprocess
@@ -44,6 +47,7 @@ import work_state  # noqa: E402
 
 MAX_ATTEMPTS = 3
 QUESTION_MARK = "нужно от меня:"
+released_unfinished = ""  # предупреждение, с которым агента отпустили после всех попыток — для дашборда
 
 
 def notify_user(text):
@@ -84,10 +88,30 @@ def last_turn(data):
     return None, agent_text or "", True
 
 
+def ask_text(agent_text):
+    """Вопрос по стоп-листу: текст ответа от строки, начинающейся с «Нужно от меня:», до конца; '' — вопроса нет."""
+    lines = agent_text.splitlines()
+    for i, line in enumerate(lines):
+        if line.replace("*", "").strip().lstrip("#>-• ").lower().startswith(QUESTION_MARK):
+            return "\n".join(lines[i:]).strip()
+    return ""
+
+
 def asks_user(agent_text):
     """Агент задал вопрос по стоп-листу: строка ответа начинается с «Нужно от меня:»."""
-    return any(line.replace("*", "").strip().lstrip("#>-• ").lower().startswith(QUESTION_MARK)
-               for line in agent_text.splitlines())
+    return bool(ask_text(agent_text))
+
+
+def show_on_dashboard(data):
+    """Ответ агента закончен — пересобрать дашборд. Любая ошибка (журнал сессии, дашборд) глушится."""
+    try:
+        agent_text = data.get("last_assistant_message")
+        if not isinstance(agent_text, str):
+            agent_text = last_turn(data)[1]
+        import dashboard
+        dashboard.turn_end(released_unfinished or ask_text(agent_text))
+    except Exception:
+        pass
 
 
 def answered_question(user_text, changed):
@@ -97,6 +121,16 @@ def answered_question(user_text, changed):
 
 def main():
     data = json.load(sys.stdin)
+    try:
+        check(data)
+    except SystemExit as e:
+        if e.code != 2:  # 2 — агента вернули доделывать, ответ не закончен
+            show_on_dashboard(data)
+        raise
+
+
+def check(data):
+    global released_unfinished
     counter = ROOT / ".claude" / ".stop_attempts"
 
     if (ROOT / ".claude" / "PAUSE").exists():
@@ -133,7 +167,8 @@ def main():
     if attempts > MAX_ATTEMPTS:
         counter.unlink(missing_ok=True)
         reason = "Проверка НЕ ПРОШЛА" if not validate_ok else "ревью не подтверждено"
-        notify_user(f"ВНИМАНИЕ: агент остановился после {MAX_ATTEMPTS} попыток. {reason} — работа НЕ готова.")
+        released_unfinished = f"ВНИМАНИЕ: агент остановился после {MAX_ATTEMPTS} попыток. {reason} — работа НЕ готова."
+        notify_user(released_unfinished)
 
     counter.write_text(str(attempts))
     if not validate_ok:

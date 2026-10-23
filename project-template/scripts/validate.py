@@ -93,6 +93,18 @@ def remembered(code_state):
     return saved.get("lines", {}) if code_state and saved.get("code") == code_state else {}
 
 
+def show_on_dashboard(ok_all, lines):
+    """Итог проверки и число зелёных тестов — в ленту дашборда. Ошибка дашборда проверку не валит."""
+    try:
+        import dashboard
+        counts = [tuple(map(int, m)) for line in lines for m in re.findall(r"зелёных (\d+) из (\d+)", line)]
+        passed, total = sum(c[0] for c in counts), sum(c[1] for c in counts)
+        dashboard.update("validate", f"Проверка {'ПРОШЛО' if ok_all else 'НЕ ПРОШЛО'} · тестов зелёных {passed} из {total}",
+                         ok=ok_all, passed=passed, total=total)
+    except Exception:
+        pass
+
+
 def main():
     code_state = work_state.state_hash()
     # --if-changed: код и тесты не менялись с последнего ПРОШЛО — тесты не прогоняем, документы проверяем всегда
@@ -119,6 +131,8 @@ def main():
         work_state.VALIDATED.parent.mkdir(exist_ok=True)
         work_state.VALIDATED.write_text(json.dumps({"code": code_state, "lines": lines}, ensure_ascii=False),
                                         encoding="utf-8")
+
+    show_on_dashboard(ok_all, lines.values())
 
     for name, ok, _, out in results:
         if not ok:

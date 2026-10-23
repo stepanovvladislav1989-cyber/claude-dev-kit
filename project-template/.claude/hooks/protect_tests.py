@@ -15,6 +15,10 @@ Claude Code покажет запрос, и решение за вами. Люб
 пользователь разрешил менять, — scripts/work_state.py (проверка в validate)
 сверяет с этим списком всё, что реально изменилось. Так правка в обход этого
 хука (командой, где путь не написан буквально) даёт НЕ ПРОШЛО.
+
+Заодно перед любым действием агента (PreToolUse подключён ко всем инструментам, включая чтение)
+отмечает на дашборде «агент работает», если перед этим он закончил ответ или сессия только
+началась (scripts/dashboard.py; ошибка глушится). Для инструментов, кроме правки и команд, защита не срабатывает.
 """
 import json
 import os
@@ -31,14 +35,14 @@ PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 # Пути сравниваются в нижнем регистре: ".claude/pause" — это .claude/PAUSE
 CONFIG = (".claude/hooks/", ".claude/settings.json", ".claude/.protected_approved", ".claude/.review_ok", ".claude/.validate_ok",
           ".claude/pause", ".pre-commit-config.yaml", ".github/workflows/", "scripts/validate.py",
-          "scripts/work_state.py", "scripts/mark_reviewed.py", "scripts/check_docs.py", "scripts/review_diff.py", "conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg")
+          "scripts/work_state.py", "scripts/mark_reviewed.py", "scripts/check_docs.py", "scripts/review_diff.py", "scripts/dashboard.py", "conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg")
 PROTECTED_PATH = re.compile(r"tests/(acceptance|e2e|golden)(/[^\s'\"`;|&()<>]*)?")
 WILDCARD = re.compile(r"[*?\[{]")
 # Команды, которые только читают или запускают — их не останавливаем
 # Интерпретатор: python, python3, py — голый или по полному пути, в том числе в кавычках и через & в PowerShell
 INTERPRETER = r"(&\s*)?(\"[^\"]*/|\S*/)?(python[\d.]*|py)(\.exe)?\"?\s+"
 READ_ONLY = re.compile(
-    r"^\s*(" + INTERPRETER + r"(-m\s+pytest|scripts/(validate|work_state|check_docs|roadmap|review_diff)\.py)|"
+    r"^\s*(" + INTERPRETER + r"(-m\s+pytest|scripts/(validate|work_state|check_docs|roadmap|review_diff|dashboard)\.py)|"
     r"pytest|cat|type|ls|dir|head|tail|grep|rg|find|"
     r"git\s+(diff|log|status|show|add|commit|push)|get-content|gc|get-childitem|gci|select-string|sls|test-path)\b",
     re.I,
@@ -108,8 +112,23 @@ def check(tool, inp):
     return None, []
 
 
+NOT_WORK_TOOLS = ("Agent", "Task", "AskUserQuestion", "ExitPlanMode")
+
+
+def show_on_dashboard():
+    """Агент снова что-то делает после ответа — дашборд переходит в «работает». Ошибка глушится."""
+    try:
+        import dashboard
+        dashboard.agent_working()
+    except Exception:
+        pass
+
+
 def main():
     data = json.load(sys.stdin)
+    # Запуск субагента отмечает model_router; вопрос вам — это не «работает»
+    if data.get("hook_event_name") == "PreToolUse" and data.get("tool_name") not in NOT_WORK_TOOLS:
+        show_on_dashboard()
     reason, paths = check(data.get("tool_name", ""), data.get("tool_input", {}) or {})
     if reason is None:
         sys.exit(0)

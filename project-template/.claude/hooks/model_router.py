@@ -16,6 +16,9 @@
     такой код пишет основной агент на Opus;
   - исполнителя на Haiku, если сложность не «низкая».
 Повышать модель можно всегда. Нет задачи «в работе» — исполнителя не ограничиваем.
+
+Разрешённый запуск записывается в ленту дашборда с моделью (scripts/dashboard.py);
+повторный запуск исполнителя по той же задаче — «ремонт». Ошибка дашборда запуск не останавливает.
 """
 import json
 import re
@@ -92,7 +95,17 @@ def main():
             if model == "haiku" and level != "низкая":
                 deny(f"{name}: Haiku только для низкой сложности, здесь «{level}». Используй sonnet")
 
+    show_on_dashboard(agent, model)
     sys.exit(0)
+
+
+def show_on_dashboard(agent, model):
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import dashboard
+        dashboard.subagent_started(agent, model)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

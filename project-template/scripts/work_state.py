@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
-REVIEW_FREE = ("docs/", ".claude/")
+REVIEW_FREE = ("docs/", ".claude/", "exports/")  # exports/ — выгрузки и дашборд, не код
 MARKER = ROOT / ".claude" / ".review_ok"
 VALIDATED = ROOT / ".claude" / ".validate_ok"  # отпечаток состояния и итог последней проверки ПРОШЛО
 APPROVED = ROOT / ".claude" / ".protected_approved"
@@ -97,7 +97,7 @@ def state_hash():
     for name in ("DATABASE_URL", "TEST_DATABASE_URL"):
         digest.update(f"{name}={os.environ.get(name, '')}\0".encode("utf-8"))
     for path in changed_paths():
-        if is_doc(path):
+        if is_doc(path) or path.startswith("exports/"):  # дашборд пишется каждый ход
             continue
         file_path = ROOT / path
         content = file_path.read_bytes().replace(b"\r\n", b"\n") if file_path.is_file() else b"<no file>"

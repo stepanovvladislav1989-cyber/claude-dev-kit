@@ -57,6 +57,16 @@ def mark():
     work_state.MARKER.write_text(work_state.changes_hash(), encoding="utf-8")
 
 
+def show_on_dashboard(text):
+    """Итог ревью — в ленту дашборда (строка «ИТОГО: …» или «без итога»). Ошибка дашборда глушится."""
+    try:
+        import dashboard
+        totals = [line.replace("*", "").strip() for line in text.splitlines() if TOTAL_RE.match(line.replace("*", ""))]
+        dashboard.update("review", "Ревью: " + (totals[-1] if totals else "ответ без строки «ИТОГО:»"))
+    except Exception:
+        pass
+
+
 def tell_agent(text):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}},
                      ensure_ascii=False))
@@ -76,7 +86,9 @@ def main():
     if data.get("hook_event_name") != "PostToolUse" or inp.get("subagent_type") != "reviewer":
         sys.exit(0)
 
-    result = verdict(response_text(data.get("tool_response")))
+    text = response_text(data.get("tool_response"))
+    result = verdict(text)
+    show_on_dashboard(text)
     if result is None:
         tell_agent("Отметка ревью НЕ поставлена: в ответе reviewer нет строки «ИТОГО:». "
                    "Запускай reviewer не в фоне и дождись его итога.")
