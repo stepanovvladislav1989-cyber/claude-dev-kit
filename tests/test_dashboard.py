@@ -96,6 +96,32 @@ def test_zadachi_po_relizam_trebovaniya_i_remont(tmp_path):
     assert 'class="stage now">задачи' in html
 
 
+def test_remont_opus_zapisyvaet_agent_i_ne_skleivaetsya(tmp_path):
+    # лимит ремонта: попытки основного агента (Opus) тоже идут в 🔧, два ремонта подряд — два
+    root = project(tmp_path, {"Т-001.md": ticket("001", "в работе")}, REQUIREMENTS, BRIEF)
+    for _ in range(3):   # три запуска исполнителя подряд — два ремонта, не склеиваются
+        assert subagent(root, "implementer", "sonnet")[0] == 0
+    res = subprocess.run([sys.executable, str(root / "scripts/dashboard.py"), "repair"], cwd=root,
+                         capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 0, res.stdout + res.stderr
+    res = subprocess.run([sys.executable, str(root / "scripts/dashboard.py"), "repair"], cwd=root,
+                         capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert [e["text"][:9] for e in events(root) if e["kind"] == "repair"] == ["Ремонт 🔧1", "Ремонт 🔧2", "Ремонт 🔧3", "Ремонт 🔧4"]
+    assert "🔧4" in page(root)
+
+
+def test_remont_bez_aktivnoy_zadachi_ne_zapisyvaetsya(tmp_path):
+    root = project(tmp_path, {"Т-001.md": ticket("001", "готово")}, REQUIREMENTS, BRIEF)
+    res = subprocess.run([sys.executable, str(root / "scripts/dashboard.py"), "repair"], cwd=root,
+                         capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 1
+    assert not (root / "exports" / "events.jsonl").exists()
+    res = subprocess.run([sys.executable, str(root / "scripts/dashboard.py"), "repiar"], cwd=root,
+                         capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 2   # опечатка в команде не проходит молча
+
+
 def test_reviewer_zapushchen_zadacha_na_proverke(tmp_path):
     root = project(tmp_path, {"Т-001.md": ticket("001", "в работе")}, REQUIREMENTS, BRIEF)
     assert subagent(root, "reviewer")[0] == 0

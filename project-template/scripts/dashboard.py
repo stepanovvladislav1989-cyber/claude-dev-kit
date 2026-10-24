@@ -24,6 +24,9 @@
   (повторный запуск исполнителя по той же задаче — «ремонт»), mark_reviewed — итог ревью,
   validate — итог проверки, session_context — новая сессия. Каждый из них пересобирает страницу.
 Ремонт считается по запускам исполнителя: перезапуск в новой сессии тоже попадает в счётчик.
+Повторную попытку основного агента (Opus) замок не видит — агент записывает её сам командой
+  python scripts/dashboard.py repair
+Число 🔧 показывает лимит ремонта (~/.claude/CLAUDE.md, «Лимит ремонта»).
 
 Любая ошибка здесь глушится (функции update, turn_end, subagent_started): страница
 не обновится, но работа агента не остановится.
@@ -145,11 +148,29 @@ def subagent_started(agent, model):
         ticket = active["id"] if active else None
         if agent == "implementer" and ticket and any(
                 e.get("ticket") == ticket and e.get("agent") == "implementer" for e in read_events()):
-            update("repair", f"Ремонт: исполнитель снова запущен на {model}", agent=agent)
+            update("repair", f"Ремонт 🔧{repairs_of(ticket) + 1}: исполнитель снова запущен на {model}", agent=agent)
         else:
             update("agent", f"Запущен {agent} на {model}", agent=agent)
     except Exception:
         pass
+
+
+def repairs_of(ticket):
+    return sum(1 for e in read_events() if e["kind"] == "repair" and e.get("ticket") == ticket)
+
+
+def opus_repair():
+    """Повторная попытка основного агента (Opus): замок её не видит, агент записывает её сам.
+    Номер в тексте — чтобы два ремонта подряд не склеились в одно событие."""
+    active = active_ticket()
+    if not active:
+        print("Нет задачи «в работе» или на «паузе» — ремонт не записан.")
+        return 1
+    n = repairs_of(active["id"]) + 1
+    record("repair", f"Ремонт 🔧{n}: основной агент снова пишет код на Opus", agent="main", ticket=active["id"])
+    build()
+    print(f"Ремонт №{n} записан по {active['id']}.")
+    return 0
 
 
 # ---------- документы ----------
@@ -512,9 +533,16 @@ def build():
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
+    if sys.argv[1:] == ["repair"]:
+        return opus_repair()
+    if sys.argv[1:]:
+        print("Неизвестная команда. Можно: без аргументов — пересобрать страницу; repair — записать ремонт.")
+        return 2
     build()
     print(f"Дашборд: {PAGE.relative_to(ROOT).as_posix()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
