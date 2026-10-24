@@ -11,7 +11,7 @@
 Есть задача «в работе» — берётся она; «пауза» — только если в работе ничего нет.
 
 Запрещает:
-  - ревьюера (reviewer) на модели слабее Opus — проверка не понижается никогда;
+  - ревьюера (reviewer) и приёмщика (acceptor) на модели слабее Opus — проверка не понижается никогда;
   - исполнителя (implementer) в 💰-задаче или задаче высокой сложности —
     такой код пишет основной агент на Opus;
   - исполнителя на Haiku, если сложность не «низкая».
@@ -82,8 +82,8 @@ def main():
     agent = (inp.get("subagent_type") or "").lower()
     model = (inp.get("model") or "").lower()
 
-    if agent == "reviewer" and model in WEAK:
-        deny(f"ревью на модели {model}. Ревью — только Opus: не передавай model или передай opus")
+    if agent in ("reviewer", "acceptor") and model in WEAK:
+        deny(f"{agent} на модели {model}. Ревью и приёмка — только Opus: не передавай model или передай opus")
 
     if agent == "implementer":
         ticket = active_ticket()

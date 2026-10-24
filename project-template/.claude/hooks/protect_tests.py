@@ -2,7 +2,8 @@
 Хук PreToolUse + PostToolUse: защита тестов-приёмки, эталона и самих замков.
 
 Создание НОВЫХ файлов в tests/acceptance/, tests/e2e/ и tests/golden/ — без вопросов
-(новые тесты пишутся по уже утверждённым сценариям).
+(новые тесты пишутся по уже утверждённым сценариям). Так же защищены проверки слепой приёмки
+принятых релизов — tests/blind/release-N при метке release-N (scripts/work_state.py).
 Изменение или удаление СУЩЕСТВУЮЩИХ — только с разрешения пользователя:
 Claude Code покажет запрос, и решение за вами. Любая правка замков и настроек
 проверки (CONFIG) — тоже только с разрешения; сюда же входят отметка ревью
@@ -36,7 +37,9 @@ PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 CONFIG = (".claude/hooks/", ".claude/settings.json", ".claude/.protected_approved", ".claude/.review_ok", ".claude/.validate_ok",
           ".claude/pause", ".pre-commit-config.yaml", ".github/workflows/", "scripts/validate.py",
           "scripts/work_state.py", "scripts/mark_reviewed.py", "scripts/check_docs.py", "scripts/review_diff.py", "scripts/dashboard.py", "conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg")
-PROTECTED_PATH = re.compile(r"tests/(acceptance|e2e|golden)(/[^\s'\"`;|&()<>]*)?")
+PROTECTED_PATH = re.compile(r"tests/(acceptance|e2e|golden|blind(/release-\d+)?)(/[^\s'\"`;|&()<>]*)?")
+# Папка проверок приёмщика целиком или одного релиза — по границе: release-1 не захватывает release-10
+BLIND_PATH = re.compile(r"tests/blind(/release-\d+)?(?![\w-])")
 WILDCARD = re.compile(r"[*?\[{]")
 # Команды, которые только читают или запускают — их не останавливаем
 # Интерпретатор: python, python3, py — голый или по полному пути, в том числе в кавычках и через & в PowerShell
@@ -88,6 +91,18 @@ def ask(reason):
     sys.exit(0)
 
 
+def protected_for(text):
+    """Защищённые папки, которые упомянуты в тексте; метки релизов спрашиваем у git, только если
+    речь о tests/blind. Папка tests/blind целиком защищена, если принят хоть один релиз."""
+    t = norm(text)
+    if "tests/blind" not in t:
+        return PROTECTED
+    import work_state
+    accepted = [p.rstrip("/") for p in work_state.accepted_blind()]
+    hits = {m.group(0) for m in BLIND_PATH.finditer(t)}
+    return (*PROTECTED, *(h for h in hits if h in accepted or (h == "tests/blind" and accepted)))
+
+
 def check(tool, inp):
     """Возвращает (причина запроса или None, защищённые пути, которые действие меняет)."""
     if tool in ("Edit", "Write", "MultiEdit"):
@@ -95,9 +110,10 @@ def check(tool, inp):
         if touches(path, CONFIG):
             return "Изменение замков или настроек проверки. Разрешить можно только после вашей проверки.", []
         is_new_file = tool == "Write" and not os.path.exists(path)
-        if touches(path, PROTECTED) and not is_new_file:
+        protected = protected_for(path)
+        if touches(path, protected) and not is_new_file:
             t = norm(path)
-            start = min(t.find(p) for p in PROTECTED if p in t)
+            start = min(t.find(p) for p in protected if p in t)
             return ("Изменение существующего защищённого теста или эталона. "
                     "Разрешить можно только после вашей проверки."), [t[start:]]
 
@@ -106,7 +122,7 @@ def check(tool, inp):
         writes = WRITE_SIGNS.search(HARMLESS_REDIRECTS.sub("", cmd)) or not READ_ONLY.match(norm(cmd))
         if touches(cmd, CONFIG) and writes:
             return "Команда может изменить замки или настройки проверки. Проверьте, что она делает.", []
-        if touches(cmd, PROTECTED) and writes:
+        if touches(cmd, protected_for(cmd)) and writes:
             paths = [approved_part(m.group(0).rstrip(".,")) for m in PROTECTED_PATH.finditer(norm(cmd))]
             return "Команда затрагивает защищённые тесты или эталон. Проверьте, что она делает.", paths
     return None, []

@@ -15,6 +15,8 @@
 
 Тесты считаются отдельно: логика (всё в tests/, кроме e2e) и сквозные e2e (tests/e2e/),
 с числом зелёных тестов — чтобы в отчёте было видно «сколько из скольких».
+Проверки слепой приёмки tests/blind/release-N входят в логику только после метки release-N
+(«релиз принят»); до неё их запускает сам приёмщик (скилл release).
 """
 import json
 import os
@@ -37,7 +39,8 @@ ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 # Команда — список (запуск без оболочки) или строка (запуск через оболочку).
 CHECKS = [
     ("Тесты логики (сценарии, эталон, инварианты)",
-     [PY, "-m", "pytest", "tests", "--ignore=tests/e2e", "-q", "--no-header", "-p", "no:cacheprovider"], False),
+     [PY, "-m", "pytest", "tests", "--ignore=tests/e2e",
+      *(f"--ignore={p}" for p in work_state.unaccepted_blind()), "-q", "--no-header", "-p", "no:cacheprovider"], False),
     ("Сквозные тесты e2e (от данных до результата)",
      [PY, "-m", "pytest", "tests/e2e", "-q", "--no-header", "-p", "no:cacheprovider"], True),
     ("Документы: ссылки и номера", [PY, "scripts/check_docs.py"], False),

@@ -13,6 +13,7 @@
 - Решения: [decisions.md](docs/decisions.md)
 - Тикеты: `docs/tickets/`
 - Эталон: [tests/golden](tests/golden/README.md)
+- Слепая приёмка релиза: `docs/acceptance/release-N.md` (образец — [_template.md](docs/acceptance/_template.md)), проверки приёмщика — `tests/blind/release-N/`
 
 ## Признаки проекта (заполняет new-project)
 

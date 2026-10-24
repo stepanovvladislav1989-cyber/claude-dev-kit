@@ -4,7 +4,9 @@
   - что изменено с последнего коммита (от git add не зависит);
   - отпечаток изменений для отметки ревью (только код и тесты — правка документов его не сбивает);
   - отпечаток состояния, чтобы validate --if-changed не прогонял тесты повторно, если код и тесты не менялись;
-  - какие существующие тесты-приёмки и эталон изменены и разрешил ли их менять пользователь.
+  - какие существующие тесты-приёмки и эталон изменены и разрешил ли их менять пользователь;
+  - проверки слепой приёмки tests/blind/release-N: до метки release-N («релиз принят») они не входят
+    в общую проверку и не защищены, после — входят и защищены, как тесты-приёмки.
 
 Запуск из командной строки:
   python scripts/work_state.py protected  — НЕ ПРОШЛО, если существующий защищённый тест или эталон
@@ -31,6 +33,7 @@ MARKER = ROOT / ".claude" / ".review_ok"
 VALIDATED = ROOT / ".claude" / ".validate_ok"  # отпечаток состояния и итог последней проверки ПРОШЛО
 APPROVED = ROOT / ".claude" / ".protected_approved"
 APPROVAL_LINE = "Разрешено пользователем: защищённые тесты"
+BLIND = ROOT / "tests" / "blind"
 
 
 def git(*args):
@@ -96,6 +99,7 @@ def state_hash():
     digest.update(env_file.read_bytes() if env_file.is_file() else b"<no .env>")
     for name in ("DATABASE_URL", "TEST_DATABASE_URL"):
         digest.update(f"{name}={os.environ.get(name, '')}\0".encode("utf-8"))
+    digest.update("\0".join(accepted_blind()).encode("utf-8"))  # новая метка релиза подключает проверки приёмщика
     for path in changed_paths():
         if is_doc(path) or path.startswith("exports/"):  # дашборд пишется каждый ход
             continue
@@ -103,6 +107,24 @@ def state_hash():
         content = file_path.read_bytes().replace(b"\r\n", b"\n") if file_path.is_file() else b"<no file>"
         digest.update(path.encode("utf-8") + b"\0" + content + b"\0")
     return digest.hexdigest()
+
+
+def accepted_blind():
+    """Проверки приёмщика принятых релизов: tests/blind/release-N/ для каждой метки release-N
+    (по меткам, а не по папкам — удаление папки целиком тоже видно). «/» на конце — чтобы
+    release-1 не захватывал release-10."""
+    return [f"tests/blind/{tag}/" for tag in git("tag", "-l", "release-*").split()]
+
+
+def unaccepted_blind():
+    """Папки проверок приёмщика без метки релиза — в общую проверку не входят."""
+    accepted = set(accepted_blind())
+    return [f"tests/blind/{d.name}" for d in sorted(BLIND.iterdir()) if d.is_dir()
+            and f"tests/blind/{d.name}/" not in accepted] if BLIND.is_dir() else []
+
+
+def protected_paths():
+    return (*PROTECTED, *accepted_blind())
 
 
 def review_confirmed():
@@ -113,7 +135,7 @@ def protected_modified():
     """Файлы тестов-приёмки и эталона, которые есть в последнем коммите и сейчас изменены или удалены."""
     if not head():
         return []
-    out = git("diff", "HEAD", "--name-only", "--no-renames", "--diff-filter=MDT", "-z", "--", *PROTECTED)
+    out = git("diff", "HEAD", "--name-only", "--no-renames", "--diff-filter=MDT", "-z", "--", *protected_paths())
     return [p for p in out.split("\0") if p]
 
 
@@ -176,7 +198,7 @@ def main():
                   "(например, после принудительной отправки).")
             sys.exit(1)
         changed = [p for p in git("diff", base, "HEAD", "--name-only", "--no-renames", "--diff-filter=MDT",
-                                  "-z", "--", *PROTECTED).split("\0") if p]
+                                  "-z", "--", *protected_paths()).split("\0") if p]
         if changed and APPROVAL_LINE not in git("log", "--format=%B", f"{base}..HEAD"):
             print("Изменены существующие тесты-приёмки или эталон, а в сообщении коммита нет строки")
             print(f"«{APPROVAL_LINE}»:")

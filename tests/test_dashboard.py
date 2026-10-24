@@ -278,7 +278,7 @@ def test_proverka_polzovatelya_ne_delaet_sinim(tmp_path):
 
 def test_priyomka_bez_itoga_ne_zelenaya(tmp_path):
     root = project(tmp_path, {"Т-001.md": ticket("001", "готово")}, REQUIREMENTS, BRIEF)
-    (root / "docs" / "acceptance").mkdir()
+    (root / "docs" / "acceptance").mkdir(exist_ok=True)
     (root / "docs" / "acceptance" / "release-1.md").write_text("# Приёмка\n\nтекст без чисел\n", encoding="utf-8")
     approve_design(root)
     html = page(root)
