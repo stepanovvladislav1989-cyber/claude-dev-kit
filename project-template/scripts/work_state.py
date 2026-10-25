@@ -11,7 +11,7 @@
 Запуск из командной строки:
   python scripts/work_state.py protected  — НЕ ПРОШЛО, если существующий защищённый тест или эталон
                                             изменён без разрешения пользователя (любым способом);
-  python scripts/work_state.py review     — НЕ ПРОШЛО, если изменён код, а ревью для него не отмечено
+  python scripts/work_state.py review     — НЕ ПРОШЛО, если изменены код или тесты, а ревью для них не отмечено
                                             (проверка перед коммитом).
   python scripts/work_state.py ci <коммит> — для проверки на GitHub: НЕ ПРОШЛО, если с указанного коммита
                                             изменены существующие тесты-приёмки или эталон, а ни в одном
@@ -30,10 +30,21 @@ ROOT = Path(__file__).resolve().parent.parent
 PROTECTED = ("tests/acceptance", "tests/e2e", "tests/golden")
 REVIEW_FREE = ("docs/", ".claude/", "exports/")  # exports/ — выгрузки и дашборд, не код
 MARKER = ROOT / ".claude" / ".review_ok"
+REVIEW_HASH = ROOT / "exports" / "review.hash"  # отпечаток изменений, с которых снят файл для ревьюера
 VALIDATED = ROOT / ".claude" / ".validate_ok"  # отпечаток состояния и итог последней проверки ПРОШЛО
 APPROVED = ROOT / ".claude" / ".protected_approved"
 APPROVAL_LINE = "Разрешено пользователем: защищённые тесты"
 BLIND = ROOT / "tests" / "blind"
+
+
+def read_doc(path):
+    """Текст документа: UTF-8 (с меткой BOM или без), а файл в кодировке Windows — как cp1251.
+    Одно место для замков: нечитаемый файл задачи не должен молча отключать замок."""
+    data = Path(path).read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1251", errors="replace")
 
 
 def git(*args):
@@ -69,6 +80,11 @@ def needs_review(path):
 def code_changed():
     """Изменён код (не документы, не служебное, не только тесты) — нужны проверка и ревью."""
     return any(needs_review(p) and not p.startswith("tests/") for p in changed_paths())
+
+
+def review_needed():
+    """Изменены код или тесты (не документы и не служебное) — перед коммитом нужно ревью."""
+    return any(needs_review(p) for p in changed_paths())
 
 
 def changes_hash():
@@ -183,8 +199,8 @@ def main():
             sys.exit(1)
         print("Защищённые тесты и эталон не тронуты без разрешения.")
     elif mode == "review":
-        if code_changed() and not review_confirmed():
-            print("Коммит остановлен: код изменён, а ревью субагентом reviewer для этих изменений не отмечено.")
+        if review_needed() and not review_confirmed():
+            print("Коммит остановлен: код или тесты изменены, а ревью субагентом reviewer для этих изменений не отмечено.")
             print("Запусти скилл review: отметку ставит замок, когда reviewer ответил без «критично».")
             print("Если ревью было: закоммить все изменения задачи целиком (git add -A) — частичный коммит не совпадёт с отметкой.")
             sys.exit(1)

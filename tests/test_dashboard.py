@@ -45,8 +45,8 @@ def project(tmp_path, tickets=None, requirements=None, brief=None):
     return root
 
 
-def run(root, script, stdin=None):
-    res = subprocess.run([sys.executable, str(root / script)], cwd=root, input=stdin,
+def run(root, script, stdin=None, *args):
+    res = subprocess.run([sys.executable, str(root / script), *args], cwd=root, input=stdin,
                          capture_output=True, text=True, encoding="utf-8")
     return res.returncode, res.stdout + res.stderr
 
@@ -164,8 +164,8 @@ def test_validate_i_review_pishut_sobytiya(tmp_path):
     root = project(tmp_path)
     code, out = run(root, "scripts/validate.py")
     assert code == 0, out
-    review = {"hook_event_name": "PostToolUse", "tool_input": {"subagent_type": "reviewer"},
-              "tool_response": "Замечаний нет.\nИТОГО: критично 0, важно 0, мелочей 0"}
+    review = {"hook_event_name": "SubagentStop", "agent_type": "reviewer",
+              "last_assistant_message": "Замечаний нет.\nИТОГО: критично 0, важно 0, мелочей 0"}
     assert run(root, "scripts/mark_reviewed.py", json.dumps(review))[0] == 0
     kinds = [e["kind"] for e in events(root)]
     assert "validate" in kinds and "review" in kinds
@@ -200,10 +200,9 @@ def test_oshibka_dashborda_ne_lomaet_zamki(tmp_path):
     assert session(root)[0] == 0
     assert pre_tool(root)[0] == 0
     assert run(root, "scripts/validate.py")[0] == 0
-    review = {"hook_event_name": "PostToolUse", "tool_input": {"subagent_type": "reviewer"},
-              "tool_response": "ИТОГО: критично 0"}
+    review = {"hook_event_name": "SubagentStop", "agent_type": "reviewer", "last_assistant_message": "ИТОГО: критично 0"}
     code, out = run(root, "scripts/mark_reviewed.py", json.dumps(review))
-    assert code == 0 and "отметка ревью поставлена" in out.lower()
+    assert code == 0 and (root / ".claude" / ".review_ok").is_file(), out
 
 
 def session(root, source="startup"):
@@ -280,19 +279,18 @@ def test_novaya_sessiya_zhdyot_a_deystvie_agenta_siniy(tmp_path):
     assert 'class="banner work"' in page(root)
 
 
-def test_zapusk_subagenta_i_vopros_ne_pishut_rabotaet(tmp_path):
+def test_soobshchenie_polzovatelya_pishet_rabotaet_molcha(tmp_path):
     root = project(tmp_path)
     assert stop(root, "Готово.")[0] == 0
-    for tool in ("Agent", "AskUserQuestion"):
-        data = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {}}
-        assert run(root, ".claude/hooks/protect_tests.py", json.dumps(data))[0] == 0
-    assert "work" not in [e["kind"] for e in events(root)]
+    code, out = run(root, "scripts/dashboard.py", None, "working")
+    assert code == 0 and out == ""      # вывод замка на сообщение ушёл бы агенту в контекст
+    assert [e["kind"] for e in events(root)][-1] == "work"
 
 
-def test_zamok_pered_deystviem_podklyuchen_ko_vsem_instrumentam():
+def test_rabotaet_stavit_zamok_na_soobshchenie_polzovatelya():
     settings = json.loads((TEMPLATE / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    pre = [h for h in settings["hooks"]["PreToolUse"] if "protect_tests" in h["hooks"][0]["command"]]
-    assert pre[0]["matcher"] == "*"     # иначе чтение файлов не переводит дашборд в «работает»
+    hook = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    assert hook["args"][-2:] == ["${CLAUDE_PROJECT_DIR}/scripts/dashboard.py", "working"]
 
 
 def test_proverka_polzovatelya_ne_delaet_sinim(tmp_path):

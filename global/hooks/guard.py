@@ -3,24 +3,28 @@
 
 Запрещает агенту:
   - читать и менять файлы с паролями и ключами (.env, *.pem, *.key, id_rsa) и искать в них (Grep);
-  - выполнять в Bash или PowerShell разрушительные команды: массовое удаление (rm -rf),
-    принудительную отправку в GitHub (push --force), сброс изменений (reset --hard,
+  - выполнять в Bash или PowerShell разрушительные команды: массовое удаление (rm -rf, rd /s,
+    Remove-Item -Recurse), принудительную отправку в GitHub (push --force, push origin +main), сброс изменений (reset --hard,
     git checkout/restore всей папки, git checkout/switch --force или --discard-changes, git clean -f;
     git restore --staged . разрешён — он рабочие файлы не трогает),
     удаление базы или схемы (DROP DATABASE / DROP SCHEMA),
     удаление или перенос файлов базы (*.db, *.sqlite) и папок data/ и backups/ в корне проекта
-    (файлы со словом «test» в имени — можно: это тестовая база);
-  - обходить проверку перед коммитом: --no-verify, commit -n, SKIP=…, установка core.hooksPath,
+    (файлы со словом «test» в имени — можно: это тестовая база), в том числе через конвейер
+    (Get-ChildItem data | Remove-Item);
+  - обходить проверку перед коммитом: --no-verify (и сокращения вроде --no-veri), commit -n, SKIP=…, установка core.hooksPath,
     запись в .git/hooks (командой или правкой файла), pre-commit uninstall;
   - менять данные или структуру базы разовой командой (psql/sqlite3/mysql/sqlcmd, python/py -c,
     python - <<) или разовым SQL-файлом вне migrations/ (UPDATE, DELETE, INSERT, ALTER, CREATE,
     DROP TABLE, TRUNCATE) — такие изменения делаются только файлом миграции в проекте.
+    База только в памяти (sqlite3 :memory:, без файлов базы) — можно.
 
 Спрашивает разрешение пользователя, если запускается python-скрипт с такими командами,
 который не входит в проект (вне src/, scripts/, migrations/, tests/ и не сохранён в git),
 или скрипт не удалось прочитать.
 
-Сообщения коммитов (-m "…" и текст после <<) при поиске обходов и удалений не учитываются.
+Сообщения коммитов (-m "…", а в git commit — и текст после <<) при поиске опасных команд, обходов, удалений и .env
+не учитываются. Упоминание .env без чтения содержимого — можно: git check-ignore .env,
+git status, Test-Path .env, echo ".env" >> .gitignore.
 
 Это защита от случайной ошибки агента, а не от умысла: команду, которая прячет действие
 (запись файла из python -c, обход внутри << …, переменная $env:skip в нижнем регистре),
@@ -39,15 +43,17 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 DANGEROUS = [
-    (re.compile(r"\bgit\s+push\b.*(--force|\s-f\b)", re.I), "принудительная отправка в GitHub (push --force)"),
+    # [^;&|\n]* — только эта команда: «git push && rm -f x» — не принудительная отправка; «+main» — тоже force
+    (re.compile(r"\bgit\s+push\b[^;&|\n]*(--force|\s-f\b|\s\+[\w/:.-])", re.I), "принудительная отправка в GitHub (push --force)"),
     (re.compile(r"\bgit\s+reset\s+--hard\b", re.I), "сброс всех изменений (reset --hard)"),
     (re.compile(r"\bdrop\s+(database|schema)\b", re.I), "удаление базы данных или схемы"),
     (re.compile(r"\bRemove-Item\b[^;|&]*-Recurse", re.I), "массовое удаление (Remove-Item -Recurse)"),
-    (re.compile(r"\b(rd|rmdir)\s+/s\b", re.I), "массовое удаление (rd /s)"),
+    (re.compile(r"\b(rd|rmdir)\b[^;&|\n]*\s/s\b", re.I), "массовое удаление (rd /s)"),
 ]
 # Обходы проверки перед коммитом — ищутся в команде без текста сообщений коммита
 BYPASS = [
-    (re.compile(r"\bgit\b.*--no-verify\b", re.I), "обход проверки перед коммитом (--no-verify)"),
+    # git принимает сокращения: --no-veri — то же --no-verify (--no-ve неоднозначно с --no-verbose)
+    (re.compile(r"\bgit\b.*--no-veri[a-z]*\b", re.I), "обход проверки перед коммитом (--no-verify)"),
     (re.compile(r"\bgit\s+commit\b[^;&|]*\s-[avsqSm]*n[avsqSm]*(?=\s|$)", re.I), "обход проверки перед коммитом (commit -n)"),
     # pre-commit читает именно SKIP заглавными
     (re.compile(r"(\$env:|\bexport\s+|\bset\s+|^|[\s;&|(])SKIP\s*="), "обход проверки перед коммитом (SKIP=)"),
@@ -74,7 +80,14 @@ DB_FILE = re.compile(r"\.(db|sqlite3?|duckdb)$", re.I)
 REDIRECT_TO_DB = re.compile(r">\s*['\"]?([^\s'\";&|]+\.(?:db|sqlite3?|duckdb))\b", re.I)
 DATA_DIRS = ("data", "backups")
 SECRET_NAME = re.compile(r"(^\.env(\..+)?$|\.pem$|\.key$|^id_rsa)", re.I)
-SECRET_IN_CMD = re.compile(r"(^|[\s/\\'\"=])\.env(?!\.example)(\.[\w-]+)?(?=$|[\s'\"])", re.I)
+SECRET_IN_CMD = re.compile(r"(^|[\s/\\'\"=(])\.env(?!\.example)(\.[\w-]+)?(?=$|[\s'\")|;&<>])", re.I)
+# Части команды, которые упоминают .env, но не читают его содержимое
+SAFE_ENV_PART = re.compile(r"^\s*(if\s*)?\(?\s*(git\s+(check-ignore|status|ls-files)\b|test\s+-[ef]\b|test-path\b|"
+                           # только запись имени в .gitignore: без $(…), `…` и (…) — иначе туда попадёт содержимое
+                           r"(echo|printf|write-output|add-content)\b[^<$`()]*\.gitignore[^$`()]*$)", re.I)
+# Перенаправление ошибок и вывода «в никуда» — не запись в файл
+HARMLESS_REDIRECTS = re.compile(r"[\d*]?>&\d|[\d*]?>\s*\$null|[\d*]?>\s*/dev/null", re.I)
+PARTS = re.compile(r"&&|\|\||[;|&\n]")
 # Папки, где скрипты с SQL — норма: приложение, команды проекта (бэкап + миграция), миграции, тесты
 PROJECT_CODE = ("src", "scripts", "migrations", "tests")
 PY_FLAGS_WITH_VALUE = {"-X", "-W", "-Q"}
@@ -128,8 +141,11 @@ def git_discard(cmd):
 
 
 def without_messages(cmd):
-    """Команда без текста сообщений коммита: «-m "…"» и тела после <<МЕТКА … МЕТКА."""
-    cmd = re.sub(r"<<-?\s*(['\"]?)(\w+)\1.*?^\s*\2\s*$", " ", cmd, flags=re.S | re.M)
+    """Команда без текста сообщений коммита: «-m "…"», а в git commit — и тела после <<МЕТКА … МЕТКА
+    (в других командах тело << — это код: bash <<EOF … git reset --hard … EOF проверяется)."""
+    # только << в той же части команды, что git commit: «git commit -m x && bash <<EOF» тело проверит
+    cmd = re.sub(r"(\bgit\s+commit\b[^\n;&|]*?)<<-?\s*(['\"]?)(\w+)\2.*?^\s*\3\s*$", r"\1 ", cmd,
+                 flags=re.S | re.M | re.I)
     return re.sub(r"(\s-m|--message)(\s+|=)(\"[^\"]*\"|'[^']*'|\S+)", " ", cmd)
 
 
@@ -159,7 +175,17 @@ def is_data_target(token, data):
     return bool(DB_FILE.search(path)) or in_data_dir(path, data)
 
 
+PIPE_DELETE = re.compile(r"^\s*(xargs\b[^|;&]*?\s|(foreach-object|foreach|%)[^{|;&]*\{\s*)?"
+                         r"(remove-item|ri|rm|del|erase|rd|rmdir)\b", re.I)
+
+
 def deletes_data(cmd, data):
+    # Get-ChildItem data | Remove-Item — что удаляется, стоит до конвейера
+    segments = cmd.split("|")
+    for before, after in zip(segments, segments[1:]):
+        if PIPE_DELETE.match(after.split(";")[0].split("&")[0]) and \
+                any(is_data_target(t, data) for t in before.split()[1:]):
+            return True
     for match in DELETE_CMD.finditer(cmd):
         verb, args = match.group(1).lower(), match.group(2).split()
         if verb in ("mv", "move", "move-item", "mi"):
@@ -247,6 +273,19 @@ def adhoc_sql_file(cmd, data):
     return unreadable
 
 
+def reads_secret(cmd):
+    """Какая-то часть команды упоминает .env и не входит в безопасные (проверка игнора, наличия)."""
+    return any(SECRET_IN_CMD.search(part) and not SAFE_ENV_PART.match(part) for part in PARTS.split(cmd))
+
+
+def db_write_command(cmd):
+    """Клиент базы и SQL-изменение где угодно в команде (SQL бывает в кавычках через «;» и после <<).
+    База только в памяти (:memory:, без файлов базы) — опыт, не данные."""
+    if not (DB_CLIENT.search(cmd) and DB_WRITE.search(cmd)):
+        return False
+    return not (":memory:" in cmd and not re.search(r"\.(db|sqlite3?|duckdb)\b|connect\(\s*['\"](?!:memory:)", cmd, re.I))
+
+
 def is_secret_file(path):
     name = PurePath((path or "").replace("\\", "/")).name
     return bool(name) and name.lower() != ".env.example" and bool(SECRET_NAME.search(name))
@@ -275,10 +314,11 @@ def main():
     tool = data.get("tool_name", "")
     inp = data.get("tool_input", {}) or {}
 
-    if tool in ("Read", "Edit", "Write", "MultiEdit") and is_secret_file(inp.get("file_path")):
+    path = inp.get("file_path") or inp.get("notebook_path")
+    if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and is_secret_file(path):
         deny("доступ к файлу с паролями или ключами")
 
-    if tool in ("Edit", "Write", "MultiEdit") and GIT_HOOKS.search(inp.get("file_path") or ""):
+    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and GIT_HOOKS.search(path or ""):
         deny("изменение проверки перед коммитом (.git/hooks)")
 
     if tool == "Grep" and (is_secret_file(inp.get("path")) or is_secret_glob(inp.get("glob"))):
@@ -293,24 +333,24 @@ def main():
             deny(discard)
         if tool == "PowerShell" and PS_RECURSIVE_DELETE.search(cmd):
             deny("массовое удаление (Remove-Item -Recurse)")
-        for pattern, what in DANGEROUS:
-            if pattern.search(cmd):
-                deny(what)
         plain = without_messages(cmd)
+        for pattern, what in DANGEROUS:
+            if pattern.search(plain):
+                deny(what)
         for pattern, what in BYPASS:
             if pattern.search(plain):
                 deny(what)
-        if GIT_HOOKS.search(plain) and WRITE_CMD.search(plain):
+        if GIT_HOOKS.search(plain) and WRITE_CMD.search(HARMLESS_REDIRECTS.sub("", plain)):
             deny("изменение проверки перед коммитом (.git/hooks)")
         if deletes_data(plain, data):
             deny("удаление или перенос файла базы, данных или бэкапов")
-        if DB_CLIENT.search(cmd) and DB_WRITE.search(cmd):
+        if db_write_command(cmd):
             deny("изменение базы разовой командой. Сделай файл миграции в migrations/ и запусти командой «бэкап + миграция»")
         sql_file = adhoc_sql_file(cmd, data)
         if sql_file and sql_file[1]:
             deny(f"изменение базы разовым SQL-файлом {sql_file[0]}. Сделай файл миграции в migrations/ "
                  "и запусти командой «бэкап + миграция»")
-        if SECRET_IN_CMD.search(cmd):
+        if reads_secret(plain):
             deny("доступ к файлу с паролями (.env)")
         # Вопросы — только после всех запретов
         if sql_file:

@@ -39,13 +39,31 @@
     ]
   },
   "hooks": {
-    "PreToolUse": [
+    "UserPromptSubmit": [
       {
-        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_tests.py\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/dashboard.py",
+              "working"
+            ]
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/protect_tests.py"
+            ],
+            "onFailure": "block"
           }
         ]
       },
@@ -54,27 +72,38 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/model_router.py\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/model_router.py"
+            ],
+            "onFailure": "block"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|Bash|PowerShell",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_tests.py\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/protect_tests.py"
+            ]
           }
         ]
-      },
+      }
+    ],
+    "SubagentStop": [
       {
-        "matcher": "Agent|Task",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/mark_reviewed.py\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/mark_reviewed.py"
+            ]
           }
         ]
       }
@@ -84,7 +113,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_red.py\"",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/stop_red.py"
+            ],
             "timeout": 3600
           }
         ]
@@ -95,7 +127,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.py\""
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/session_context.py"
+            ]
           }
         ]
       }

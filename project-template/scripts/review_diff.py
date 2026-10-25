@@ -8,7 +8,8 @@
     python scripts/review_diff.py --all      — весь код проекта (первый релиз)
 
 Результат: exports/review.diff (папка не попадает в git). Скрипт печатает путь и размер —
-путь передаётся ревьюеру, сам файл основной агент не читает.
+путь передаётся ревьюеру, сам файл основной агент не читает. Рядом — exports/review.hash:
+отпечаток этих изменений; по нему замок ставит отметку ревью именно за то, что ревьюер видел.
 
 В файле: коммит и время, список изменённых файлов, затем все изменения (строки с «-» удалены,
 с «+» добавлены); новые файлы — целиком. Ничего не отбирается, кроме файлов из .gitignore
@@ -16,6 +17,8 @@
 """
 import subprocess
 import sys
+
+import work_state
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +61,8 @@ def new_file_text(path):
 
 def main():
     OUT.unlink(missing_ok=True)  # упадёт скрипт — ревьюер не прочтёт старые изменения
+    work_state.REVIEW_HASH.unlink(missing_ok=True)
+    fingerprint = work_state.changes_hash()  # до сбора: правка во время сбора даст другой отпечаток
     base = base_ref(sys.argv[1] if len(sys.argv) > 1 else "")
     stat = git("diff", base, "--stat=200", "--no-color")
     diff = git("diff", base, "--no-color", "--no-ext-diff", "-M")
@@ -74,6 +79,8 @@ def main():
     OUT.parent.mkdir(exist_ok=True)
     text = "".join(parts)
     OUT.write_text(text, encoding="utf-8")
+    if not sys.argv[1:]:  # отпечаток — только для ревью задачи; для релиза mark_reviewed берёт текущий
+        work_state.REVIEW_HASH.write_text(fingerprint, encoding="utf-8")
     print(f"Изменения для ревью: {OUT.relative_to(ROOT).as_posix()} — строк {text.count(chr(10))}")
 
 

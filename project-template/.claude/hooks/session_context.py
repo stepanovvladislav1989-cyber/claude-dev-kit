@@ -3,6 +3,8 @@
 подгружает агенту журнал текущей задачи — чтобы он продолжал по записям, а не по памяти.
 
 Текущая задача — файл в docs/tickets/ со статусом «в работе», а если такой нет — «пауза».
+Задач «в работе» несколько — агент получает их список и просьбу оставить в работе одну
+(остальные — «отложена» или «пауза»): иначе замок выбора модели берёт самую строгую.
 Агенту передаются: путь к файлу задачи, статус и раздел «Где остановились».
 Нет такой задачи — хук молчит.
 
@@ -20,6 +22,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 ROOT = Path(__file__).resolve().parent.parent.parent
 TICKETS = ROOT / "docs" / "tickets"
 STATUS_RE = re.compile(r"\*\*Статус:\*\*\s*([^·\n]+)")
+sys.path.insert(0, str(ROOT / "scripts"))
+import work_state  # noqa: E402
+
 MAX_CHARS = 4000  # журнал длиннее — показываем последние записи
 
 
@@ -33,7 +38,6 @@ def journal(text):
 
 def show_on_dashboard():
     try:
-        sys.path.insert(0, str(ROOT / "scripts"))
         import dashboard
         dashboard.update("session", "Новая сессия")
     except Exception:
@@ -52,14 +56,18 @@ def main():
     files = []
     for f in sorted(TICKETS.glob("*.md")):
         if not f.name.startswith("_"):
-            text = f.read_text(encoding="utf-8")
+            text = work_state.read_doc(f)
             m = STATUS_RE.search(text)
             files.append((f, text, m.group(1).strip().lower() if m else ""))
     for wanted in ("в работе", "пауза"):
-        for f, text, status in files:
-            if status.startswith(wanted):
-                show(f, text, status)
-                return
+        found = [(f, text, status) for f, text, status in files if status.startswith(wanted)]
+        if found:
+            show(*found[0])
+            if len(found) > 1:
+                names = ", ".join(f.stem for f, _, _ in found)
+                print(f"Внимание: со статусом «{wanted}» несколько задач: {names}. Оставь одну, "
+                      "остальным поставь «отложена» или «пауза» (замок выбора модели берёт самую строгую).")
+            return
 
 
 def show(f, text, status):

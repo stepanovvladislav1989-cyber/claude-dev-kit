@@ -18,13 +18,15 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
+import work_state
+
 sys.stdout.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
 TICKETS = ROOT / "docs" / "tickets"
 OUT = ROOT / "docs" / "roadmap.md"
 
-ICONS = {"готово": "✅", "в работе": "🔄", "пауза": "⏸", "новый": "⬜"}
+ICONS = {"готово": "✅", "в работе": "🔄", "пауза": "⏸", "отложена": "⏭", "новый": "⬜"}
 TITLE_RE = re.compile(r"^#\s+([ТT]-\d+)\.?\s*(.*)$", re.M)
 STATUS_RE = re.compile(r"\*\*Статус:\*\*\s*([^·\n]+)")
 RELEASE_RE = re.compile(r"\*\*Релиз:\*\*\s*(\d+)\.?\s*([^·\n]*)")
@@ -51,7 +53,7 @@ def read_tickets():
     for f in sorted(TICKETS.glob("*.md")):
         if f.name.startswith("_"):
             continue
-        text = f.read_text(encoding="utf-8")
+        text = work_state.read_doc(f)
         t = TITLE_RE.search(text)
         if not t:
             continue

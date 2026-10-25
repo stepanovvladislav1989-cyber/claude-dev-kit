@@ -5,28 +5,30 @@
   - APP_ENV=test — приложение знает, что его запускают тесты;
   - адрес тестовой базы TEST_DATABASE_URL (из окружения или из .env) подставляется
     в DATABASE_URL — приложение, читающее .env без перезаписи, получит тестовую базу;
-  - если адрес базы есть, а тестового нет, или в тестовом адресе нет слова «test» —
-    тесты не запускаются вовсе, проверка НЕ ПРОШЛА.
+  - если адрес базы есть, а тестового нет, или в тестовом адресе нет слова «test»
+    (отдельно: app_test, test.db; «latest» не считается) — тесты не запускаются вовсе, проверка НЕ ПРОШЛА.
 
 Нет базы в проекте (нет ни DATABASE_URL, ни TEST_DATABASE_URL) — ничего не делает.
 Файл — часть настроек проверки: меняется только с разрешения пользователя.
 """
 import os
+import re
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+TEST_WORD = re.compile(r"(?<![a-z])test", re.I)
 
 
 def env_file_values():
-    """Значения из .env без сторонних библиотек: строки КЛЮЧ=значение."""
+    """Значения из .env без сторонних библиотек: строки КЛЮЧ=значение (и «export КЛЮЧ=значение»)."""
     path = ROOT / ".env"
     if not path.is_file():
         return {}
     values = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        key, sep, value = line.strip().partition("=")
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
         if sep and not key.startswith("#"):
             values[key.strip()] = value.strip().strip("'\"")
     return values
@@ -45,7 +47,7 @@ def pytest_configure(config):
     if not test_url:
         pytest.exit("Тесты остановлены: задан адрес рабочей базы DATABASE_URL, но нет TEST_DATABASE_URL. "
                     "Тесты могли бы изменить настоящие данные.", returncode=3)
-    if "test" not in test_url.lower():
+    if not TEST_WORD.search(test_url):
         pytest.exit("Тесты остановлены: в адресе TEST_DATABASE_URL нет слова «test» — "
                     "похоже на рабочую базу.", returncode=3)
     if db_url and test_url == db_url:

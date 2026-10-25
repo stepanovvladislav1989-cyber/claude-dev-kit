@@ -8,6 +8,7 @@
      пока файла брифа нет, номера Б не проверяются).
   4. Когда задачи уже нарезаны: ТР нет в поле «Требования» ни одной задачи (кроме «Статус: отложено» и «снято»).
   5. В поле «Требования» задачи нет ни одного ТР.
+  5а. Номер в заголовке задачи с латинской буквой («# T-002») — замки и дашборд ищут русскую «Т».
 
 Предупреждения (проверку не валят):
   6. У правила ПР или инварианта ИНВ пока нет ни одного теста.
@@ -36,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PREFIXES = {"ТР": "tr", "ПР": "pr", "ИНВ": "inv", "Т": "t", "Р": "r"}
 ID_RE = re.compile(r"(?<![\w-])(ТР|ПР|ИНВ|Т|Р)-(\d{2,4})(?![\w])")
 HEAD_RE = re.compile(r"^#{1,6}\s+(ТР|ПР|ИНВ|Т|Р)-(\d{2,4})\b")
+LATIN_TICKET_RE = re.compile(r"^#\s+T-\d", re.M)  # латинская T вместо русской Т
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 FENCE_RE = re.compile(r"```.*?```", re.S)
 CLARIFY_RE = re.compile(r"\[УТОЧНИТЬ:")
@@ -119,8 +121,10 @@ def main():
 
     for f in doc_files():
         rel = f.relative_to(ROOT).as_posix()
-        text = f.read_text(encoding="utf-8")
+        text = f.read_text(encoding="utf-8-sig")  # -sig: метка BOM в начале не ломает первый заголовок
         body = FENCE_RE.sub("", text)  # примеры в блоках кода не считаем
+        if rel.startswith("docs/tickets/") and LATIN_TICKET_RE.search(body):
+            errors.append(f"В {rel} номер задачи с латинской «T» — замени на русскую «Т»")
 
         if rel == BRIEF:
             for id_ in brief_ids(body):
@@ -198,7 +202,7 @@ def main():
         if prefix not in ("ПР", "ИНВ"):
             continue
         latin = f"{PREFIXES[prefix]}{num}"
-        if not re.search(rf"({re.escape(id_.lower())}|{latin})(?!\d)", names):
+        if not re.search(rf"(?<![a-zа-яё])({re.escape(id_.lower())}|{latin})(?!\d)", names):  # upr07 — не ПР-07
             warnings.append(f"У {id_} пока нет теста")
 
     has_tickets = any(t.startswith("Т-") for t in defined)

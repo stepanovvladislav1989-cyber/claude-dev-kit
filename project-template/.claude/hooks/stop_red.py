@@ -13,15 +13,19 @@
 Если файла нет или код изменился после отметки — считаем, что ревью для этих изменений не было,
 и не даём закончить. Логика «что изменено» и отпечаток — в scripts/work_state.py.
 
-Защита от бесконечного цикла: после MAX_ATTEMPTS попыток подряд агента отпускают,
+Защита от бесконечного цикла: после MAX_ATTEMPTS возвратов подряд агента отпускают,
 а вам показывается предупреждение «работа НЕ готова».
 
 Вопрос вам: если в последнем ответе агента есть строка «Нужно от меня:» (решение по стоп-листу),
 хук не гоняет его по кругу, а отпускает и показывает вам, что работа не готова и ждёт решения.
 
-Ваш вопрос: если ваше последнее сообщение — вопрос (кончается на «?»), а агент в этом ходе
-только читал файлы (не правил, не запускал команд и субагентов), он просто ответил — хук отпускает
-с напоминанием, что задача не доделана. Иначе агента заставляли бы чинить код вместо ответа.
+Ваш вопрос: если в вашем последнем сообщении есть «?», а агент в этом ходе только читал
+(файлы, поиск, команды только для чтения и проверки — как их понимает protect_tests; не правил
+и не запускал субагентов), он просто ответил — хук отпускает с напоминанием, что задача не доделана.
+Иначе агента заставляли бы чинить код вместо ответа.
+
+Фоновые задачи: если у агента ещё работает фоновый субагент (например, reviewer; поле background_tasks,
+тип subagent), хук его отпускает — агент вернётся к работе, когда задача закончится, и хук сработает снова.
 
 Проверка запускается с --if-changed: если код и тесты не менялись с последнего ПРОШЛО,
 тесты повторно не прогоняются.
@@ -43,9 +47,12 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import work_state  # noqa: E402
+from protect_tests import read_only  # noqa: E402
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 3  # возвраты замка — не попытки ремонта из «Лимита ремонта»
+TRANSCRIPT_TAIL = 4_000_000  # байт с конца журнала сессии: журнал бывает в десятки МБ
 QUESTION_MARK = "нужно от меня:"
 released_unfinished = ""  # предупреждение, с которым агента отпустили после всех попыток — для дашборда
 
@@ -55,8 +62,27 @@ def notify_user(text):
     sys.exit(0)
 
 
-# Только читают. Любой другой инструмент (правка, команда, субагент) — агент мог что-то изменить
+# Только читают. Команды — по protect_tests.read_only; правка и субагент — агент мог что-то изменить
 READ_TOOLS = ("Read", "Grep", "Glob", "WebFetch", "WebSearch", "ToolSearch")
+SHELL_TOOLS = ("Bash", "PowerShell")
+
+
+def changes_something(item):
+    if item.get("type") != "tool_use" or item.get("name") in READ_TOOLS:
+        return False
+    if item.get("name") in SHELL_TOOLS:
+        return not read_only((item.get("input") or {}).get("command", ""))
+    return True
+
+
+def transcript_lines(path):
+    """Строки хвоста журнала сессии — без чтения всего файла."""
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - TRANSCRIPT_TAIL))
+        lines = f.read().decode("utf-8", errors="replace").splitlines()
+    return lines[1:] if size > TRANSCRIPT_TAIL else lines  # первая строка хвоста обрезана
 
 
 def last_turn(data):
@@ -65,7 +91,7 @@ def last_turn(data):
     path = data.get("transcript_path")
     if not path or not Path(path).is_file():
         return None, "", True
-    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = transcript_lines(path)
     agent_text, changed = None, False
     for line in reversed(lines[-500:]):
         try:
@@ -81,7 +107,7 @@ def last_turn(data):
         if entry.get("type") == "assistant":
             if agent_text is None and texts:
                 agent_text = "\n".join(texts)
-            changed = changed or any(c.get("type") == "tool_use" and c.get("name") not in READ_TOOLS for c in items)
+            changed = changed or any(changes_something(c) for c in items)
         elif entry.get("type") == "user" and texts and not entry.get("isMeta"):
             typed = [t for t in texts if not t.lstrip().startswith("<")]  # без служебных вставок редактора
             return "\n".join(typed), agent_text or "", changed  # дошли до сообщения пользователя
@@ -116,7 +142,7 @@ def show_on_dashboard(data):
 
 def answered_question(user_text, changed):
     """Пользователь спросил, агент только ответил и ничего не менял."""
-    return user_text is not None and user_text.strip().endswith("?") and not changed
+    return user_text is not None and "?" in user_text and not changed
 
 
 def main():
@@ -139,6 +165,11 @@ def check(data):
     if not (ROOT / "scripts" / "validate.py").exists():
         sys.exit(0)
     if not work_state.code_changed() and not work_state.protected_modified():
+        sys.exit(0)
+
+    # Агент ждёт фонового субагента (например, reviewer) — вернётся сам, когда тот закончит.
+    # Фоновый сервер (тип shell) работает всю сессию — его не ждём, проверка как обычно.
+    if any(isinstance(t, dict) and t.get("type") == "subagent" for t in data.get("background_tasks") or []):
         sys.exit(0)
 
     attempts = int(counter.read_text()) if data.get("stop_hook_active") and counter.exists() else 0
@@ -167,22 +198,22 @@ def check(data):
     if attempts > MAX_ATTEMPTS:
         counter.unlink(missing_ok=True)
         reason = "Проверка НЕ ПРОШЛА" if not validate_ok else "ревью не подтверждено"
-        released_unfinished = f"ВНИМАНИЕ: агент остановился после {MAX_ATTEMPTS} попыток. {reason} — работа НЕ готова."
+        released_unfinished = f"ВНИМАНИЕ: агент остановился после {MAX_ATTEMPTS} возвратов замка. {reason} — работа НЕ готова."
         notify_user(released_unfinished)
 
     counter.write_text(str(attempts))
     if not validate_ok:
         tail = "\n".join(res.stdout.strip().splitlines()[-30:])
         message = (
-            f"Проверка НЕ ПРОШЛА (попытка {attempts} из {MAX_ATTEMPTS}). Завершать работу нельзя.\n"
+            f"Проверка НЕ ПРОШЛА (возврат замка {attempts} из {MAX_ATTEMPTS}; это не попытка из «Лимита ремонта»). Завершать работу нельзя.\n"
             "Исправь код, а не тесты. Защищённые тесты меняются только с разрешения пользователя.\n"
             "Если нужно решение пользователя — ясно сформулируй вопрос в ответе.\n\n" + tail
         )
     else:
         message = (
             f"Проверка ПРОШЛА, но ревью субагентом reviewer для текущих изменений не подтверждено "
-            f"(попытка {attempts} из {MAX_ATTEMPTS}). Завершать работу нельзя.\n"
-            "Запусти скилл review (субагент reviewer, не в фоне). Отметку ставит замок, когда reviewer "
+            f"(возврат замка {attempts} из {MAX_ATTEMPTS}). Завершать работу нельзя.\n"
+            "Запусти скилл review и дождись итога субагента reviewer. Отметку ставит замок, когда reviewer "
             "ответил без «критично»; после исправлений запусти reviewer снова."
         )
     print(message, file=sys.stderr)

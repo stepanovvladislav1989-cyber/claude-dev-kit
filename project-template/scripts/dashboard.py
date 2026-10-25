@@ -11,7 +11,7 @@
     (в ответе блок «Нужно от меня:» или замок отпустил его с неготовой работой);
     красный — последняя проверка НЕ ПРОШЛА; синий — агент работает;
     зелёный — агент закончил ответ или началась новая сессия, проверка не красная
-    («работает» ставит замок protect_tests перед первым действием агента после ответа);
+    («работает» ставят замки: на ваше сообщение и protect_tests перед первой правкой или командой после ответа);
   - этапы: допрос (есть ТР) → устройство (design.md утверждён) → нарезка (есть задачи) →
     задачи (все текущего релиза готовы) → приёмка (docs/acceptance/release-N.md) → релиз (метка release-N);
   - цепочка проверок: бриф → ТР → задачи → тесты → приёмка, с числами;
@@ -42,6 +42,7 @@ from datetime import datetime
 from pathlib import Path
 
 import check_docs
+import work_state
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "exports"
@@ -54,7 +55,7 @@ ASK_CHARS = 3000
 ACTIVITY = ("ask", "turn", "work", "agent", "repair", "review", "session")  # проверку может запустить и пользователь
 HIDDEN = ("turn", "work")              # служебное: только для общего цвета, в ленту не идёт
 
-TICKET_HEAD_RE = re.compile(r"^#\s+(Т-\d{2,4})\.?\s*(.*)$", re.M)
+TICKET_HEAD_RE = re.compile(r"^#\s+([ТT]-\d{2,4})\.?\s*(.*)$", re.M)  # латинскую T check_docs считает ошибкой, но задачу видно
 FIELD_RE = r"\*\*{}:\*\*\s*([^·\n*]*)"
 ASK_MARK_RE = re.compile(r"^[\W]*нужно от меня:\**\s*", re.I)
 TOTAL_RE = re.compile(r"(\d+)\s+из\s+(\d+)")
@@ -119,7 +120,7 @@ def turn_end(ask):
 
 def agent_working():
     """Агент снова действует после конца ответа или старта сессии — «работает».
-    Вызывается перед каждым действием агента, поэтому пишет только при смене состояния."""
+    Вызывается часто (сообщение пользователя, каждая правка и команда), поэтому пишет только при смене состояния."""
     try:
         activity = [e for e in read_events() if e["kind"] in ACTIVITY]
         if activity and activity[-1]["kind"] in ("ask", "turn", "session"):
@@ -176,7 +177,7 @@ def opus_repair():
 # ---------- документы ----------
 
 def read(path):
-    return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+    return work_state.read_doc(path) if path.is_file() else ""
 
 
 def field(name, text):
@@ -196,7 +197,7 @@ def tickets():
         if not m:
             continue
         result.append({
-            "id": m.group(1), "title": m.group(2).strip(),
+            "id": "Т-" + m.group(1)[2:], "title": m.group(2).strip(),
             "status": field("Статус", text).lower(),
             "release": field("Релиз", text),
             "trs": check_docs.ticket_trs(text),
@@ -267,6 +268,8 @@ def task_state(t, events):
         return "done", "готово"
     if t["status"].startswith("пауза"):
         return "pause", "пауза"
+    if t["status"].startswith("отложен"):
+        return "pause", "отложена"
     if t["status"].startswith("в работе"):
         own = [e for e in events if e.get("ticket") == t["id"] and e["kind"] in ("agent", "repair", "review")]
         last = own[-1] if own else {}
@@ -536,8 +539,12 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     if sys.argv[1:] == ["repair"]:
         return opus_repair()
+    if sys.argv[1:] == ["working"]:  # замок на сообщение пользователя: ничего не печатает — вывод ушёл бы агенту
+        agent_working()
+        return 0
     if sys.argv[1:]:
-        print("Неизвестная команда. Можно: без аргументов — пересобрать страницу; repair — записать ремонт.")
+        print("Неизвестная команда. Можно: без аргументов — пересобрать страницу; repair — записать ремонт; "
+              "working — отметить «агент работает».")
         return 2
     build()
     print(f"Дашборд: {PAGE.relative_to(ROOT).as_posix()}")

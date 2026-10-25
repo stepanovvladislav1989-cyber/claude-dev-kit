@@ -50,14 +50,18 @@ CHECKS = [
 TAIL_LINES = 30  # сколько последних строк вывода показывать при ошибке
 
 
+COUNTED = r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)\b"
+
+
 def count_tests(out):
-    """Из итоговой строки pytest (последней строки с числами) достаёт «зелёных X из Y»."""
-    summary = next((line for line in reversed(out.splitlines())
-                    if re.search(r"\d+ (passed|failed|error|errors|skipped)", line)), "")
-    nums = {k: int(v) for v, k in re.findall(r"(\d+) (passed|failed|error|errors|skipped)", summary)}
+    """Из итоговой строки pytest (последней строки с числами) достаёт (зелёных, всего, пропущенных или
+    «ожидаемо падает»). Пропуски и xfail/xpass входят во «всего», но не в зелёные — тест нельзя тихо выключить."""
+    summary = next((line for line in reversed(out.splitlines()) if re.search(COUNTED, line)), "")
+    nums = {k: int(v) for v, k in re.findall(COUNTED, summary)}
     passed = nums.get("passed", 0)
-    total = passed + nums.get("failed", 0) + nums.get("error", 0) + nums.get("errors", 0) + nums.get("skipped", 0)
-    return passed, total
+    marked = nums.get("skipped", 0) + nums.get("xfailed", 0) + nums.get("xpassed", 0)
+    total = passed + nums.get("failed", 0) + nums.get("error", 0) + nums.get("errors", 0) + marked
+    return passed, total, marked
 
 
 def run(cmd, allow_empty):
@@ -79,10 +83,10 @@ def run(cmd, allow_empty):
         return False, "тестов не найдено — проверка без тестов не считается пройденной", out
     note = ""
     if is_pytest:
-        passed, total = count_tests(res.stdout or "")
+        passed, total, marked = count_tests(res.stdout or "")
         note = f"зелёных {passed} из {total}"
-        if res.returncode == 0 and "skipped" in out:
-            note += " (есть пропущенные — проверить почему)"
+        if marked:
+            note += f" (пропущенных или помеченных «ожидаемо падает»: {marked} — проверить почему)"
     return res.returncode == 0, note, out
 
 
