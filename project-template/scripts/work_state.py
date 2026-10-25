@@ -22,6 +22,7 @@
 """
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,9 @@ VALIDATED = ROOT / ".claude" / ".validate_ok"  # отпечаток состоя
 APPROVED = ROOT / ".claude" / ".protected_approved"
 APPROVAL_LINE = "Разрешено пользователем: защищённые тесты"
 BLIND = ROOT / "tests" / "blind"
+TICKETS = ROOT / "docs" / "tickets"
+TICKET_STATUS_RE = re.compile(r"\*\*Статус:\*\*\s*([^·\n*]+)")
+ACTIVE_STATUSES = ("в работе", "пауза")
 
 
 def read_doc(path):
@@ -45,6 +49,26 @@ def read_doc(path):
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return data.decode("cp1251", errors="replace")
+
+
+def ticket_status(text):
+    m = TICKET_STATUS_RE.search(text)
+    return m.group(1).strip().lower() if m else ""
+
+
+def active_tickets():
+    """Текущие задачи — одно место для model_router, session_context и дашборда: файлы docs/tickets/
+    со статусом «в работе», а если таких нет — «пауза». Список (путь, текст, статус); пусто — нет таких.
+    «Отложена», «готово», «новый» — не текущие. Шаблоны (имя с «_») не считаются."""
+    if not TICKETS.is_dir():
+        return []
+    files = [(f, text, ticket_status(text)) for f in sorted(TICKETS.glob("*.md")) if not f.name.startswith("_")
+             for text in [read_doc(f)]]
+    for wanted in ACTIVE_STATUSES:
+        found = [item for item in files if item[2].startswith(wanted)]
+        if found:
+            return found
+    return []
 
 
 def git(*args):

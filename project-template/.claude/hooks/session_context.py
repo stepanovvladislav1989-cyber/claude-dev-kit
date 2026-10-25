@@ -12,7 +12,6 @@
 контекста, это продолжение работы; ошибка дашборда глушится.
 """
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -20,8 +19,6 @@ sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данн
 sys.stdout.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-TICKETS = ROOT / "docs" / "tickets"
-STATUS_RE = re.compile(r"\*\*Статус:\*\*\s*([^·\n]+)")
 sys.path.insert(0, str(ROOT / "scripts"))
 import work_state  # noqa: E402
 
@@ -51,23 +48,13 @@ def main():
         source = ""
     if source != "compact":  # сжатие контекста посреди работы — не новая сессия
         show_on_dashboard()
-    if not TICKETS.is_dir():
-        return
-    files = []
-    for f in sorted(TICKETS.glob("*.md")):
-        if not f.name.startswith("_"):
-            text = work_state.read_doc(f)
-            m = STATUS_RE.search(text)
-            files.append((f, text, m.group(1).strip().lower() if m else ""))
-    for wanted in ("в работе", "пауза"):
-        found = [(f, text, status) for f, text, status in files if status.startswith(wanted)]
-        if found:
-            show(*found[0])
-            if len(found) > 1:
-                names = ", ".join(f.stem for f, _, _ in found)
-                print(f"Внимание: со статусом «{wanted}» несколько задач: {names}. Оставь одну, "
-                      "остальным поставь «отложена» или «пауза» (замок выбора модели берёт самую строгую).")
-            return
+    found = work_state.active_tickets()
+    if found:
+        show(*found[0])
+        if len(found) > 1:
+            names = ", ".join(f.stem for f, _, _ in found)
+            print(f"Внимание: со статусом «{found[0][2]}» несколько задач: {names}. Оставь одну, "
+                  "остальным поставь «отложена» или «пауза» (замок выбора модели берёт самую строгую).")
 
 
 def show(f, text, status):

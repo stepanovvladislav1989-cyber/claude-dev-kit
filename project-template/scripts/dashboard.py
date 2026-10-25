@@ -26,7 +26,8 @@
 Ремонт считается по запускам исполнителя: перезапуск в новой сессии тоже попадает в счётчик.
 Повторную попытку основного агента (Opus) замок не видит — агент записывает её сам командой
   python scripts/dashboard.py repair
-Число 🔧 показывает лимит ремонта (~/.claude/CLAUDE.md, «Лимит ремонта»).
+Число 🔧 показывает лимит ремонта (~/.claude/CLAUDE.md, «Лимит ремонта»). Каждый ремонт сам дописывает
+в журнал задачи («Где остановились») строку «попытка N из 4» — журнал и 🔧 не расходятся.
 
 Любая ошибка здесь глушится (функции update, turn_end, subagent_started): страница
 не обновится, но работа агента не остановится.
@@ -149,7 +150,9 @@ def subagent_started(agent, model):
         ticket = active["id"] if active else None
         if agent == "implementer" and ticket and any(
                 e.get("ticket") == ticket and e.get("agent") == "implementer" for e in read_events()):
-            update("repair", f"Ремонт 🔧{repairs_of(ticket) + 1}: исполнитель снова запущен на {model}", agent=agent)
+            n = repairs_of(ticket) + 1
+            update("repair", f"Ремонт 🔧{n}: исполнитель снова запущен на {model}", agent=agent)
+            journal_attempt(active, n, f"implementer на {model}")
         else:
             update("agent", f"Запущен {agent} на {model}", agent=agent)
     except Exception:
@@ -169,9 +172,44 @@ def opus_repair():
         return 1
     n = repairs_of(active["id"]) + 1
     record("repair", f"Ремонт 🔧{n}: основной агент снова пишет код на Opus", agent="main", ticket=active["id"])
+    written = journal_attempt(active, n, "основной агент на Opus")
     build()
-    print(f"Ремонт №{n} записан по {active['id']}.")
+    print(f"Ремонт №{n} записан по {active['id']}: " + (f"в журнал задачи добавлена строка «попытка {n + 1} из 4»."
+          if written else f"журнал задачи записать не удалось — допиши сам «попытка {n + 1} из 4»."))
     return 0
+
+
+JOURNAL_HEAD = "## Где остановились"
+
+
+def journal_attempt(active, n, who):
+    """Ремонт 🔧n — это попытка n+1 по «Лимиту ремонта»: строка в журнал задачи, чтобы журнал и 🔧
+    не расходились (на пилоте ремонт по ревью попадал в ленту, но не в журнал).
+    Кодировка (UTF-8, с меткой BOM или без, cp1251) и переводы строк файла сохраняются.
+    True — записано; ошибка глушится (False): ремонт уже в ленте, работа агента не останавливается."""
+    try:
+        path = active["file"]
+        data = path.read_bytes()
+        encoding = "utf-8-sig" if data.startswith(b"\xef\xbb\xbf") else "utf-8"
+        try:
+            raw = data.decode(encoding)
+        except UnicodeDecodeError:
+            encoding, raw = "cp1251", data.decode("cp1251")  # не читается и так — не трогаем (False)
+        crlf = "\r\n" in raw
+        text = raw.replace("\r\n", "\n")
+        line = f"- {datetime.now():%Y-%m-%d %H:%M} · попытка {n + 1} из 4 (🔧{n}) · {who} · записано счётчиком ремонтов"
+        start = text.find(JOURNAL_HEAD)
+        if start < 0:
+            text = text.rstrip("\n") + f"\n\n{JOURNAL_HEAD}\n\n{line}\n"
+        else:
+            end = text.find("\n## ", start + len(JOURNAL_HEAD))
+            end = len(text) if end < 0 else end
+            text = text[:end].rstrip("\n") + f"\n{line}\n" + ("\n" + text[end:].lstrip("\n") if end < len(text) else "")
+        # байтами: write_text на Windows превратил бы каждый \n в \r\n, а \r\n — в \r\r\n
+        path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode(encoding, errors="replace"))
+        return True
+    except Exception:
+        return False
 
 
 # ---------- документы ----------
@@ -197,7 +235,7 @@ def tickets():
         if not m:
             continue
         result.append({
-            "id": "Т-" + m.group(1)[2:], "title": m.group(2).strip(),
+            "id": "Т-" + m.group(1)[2:], "title": m.group(2).strip(), "file": f,
             "status": field("Статус", text).lower(),
             "release": field("Релиз", text),
             "trs": check_docs.ticket_trs(text),
@@ -206,12 +244,9 @@ def tickets():
 
 
 def active_ticket():
-    found = tickets()
-    for wanted in ("в работе", "пауза"):
-        for t in found:
-            if t["status"].startswith(wanted):
-                return t
-    return None
+    """Первая текущая задача (выбор — work_state.active_tickets) или None."""
+    current = [f for f, _, _ in work_state.active_tickets()]
+    return next((t for f in current for t in tickets() if t["file"] == f), None)
 
 
 def requirements():

@@ -1,9 +1,13 @@
 """
 Отметка «ревью субагентом reviewer подтверждено для текущих изменений».
 
-Ставится замком: хук SubagentStop (.claude/settings.json) — срабатывает, когда субагент закончил,
-в том числе запущенный в фоне. Когда закончил reviewer и последняя строка его ответа,
-начинающаяся с «ИТОГО:», содержит «критично 0», скрипт записывает в .claude/.review_ok
+Ставится замком (.claude/settings.json) по ответу субагента reviewer — одним из двух хуков:
+  - PostToolUse на SubagentHandback — так отчёт сдаёт фоновый субагент (Claude Code ≥ 2.1.271):
+    отчёт приходит прямо во входе хука (tool_input.message), без чтения записи и ожидания;
+  - SubagentStop — субагент закончил; ответ — его последнее сообщение (last_assistant_message).
+    Если тот же субагент уже сдал отчёт через SubagentHandback, его последнее сообщение — не отчёт:
+    хук ничего не делает (номер субагента запоминается в exports/review_handback.txt).
+Когда последняя строка ответа, начинающаяся с «ИТОГО:», содержит «критично 0», скрипт записывает в .claude/.review_ok
 отпечаток изменений кода и тестов — тот, что снял scripts/review_diff.py вместе с файлом
 изменений (exports/review.hash). Так отметка относится к тому, что ревьюер видел: правка кода
 между сбором файла изменений и ответом ревьюера отметку не получит. Остались критичные —
@@ -29,9 +33,7 @@ import sys
 
 import work_state
 
-sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данные в UTF-8, Windows по умолчанию читает cp1251
-sys.stdout.reconfigure(encoding="utf-8")
-
+HANDBACK = work_state.ROOT / "exports" / "review_handback.txt"  # номера ревьюеров, сдавших отчёт через SubagentHandback
 TOTAL_RE = re.compile(r"^\s*ИТОГО:.*?критично\s+(\d+)", re.I)
 PLAN_RE = re.compile(r"^\s*ИТОГО ПЛАНА:", re.I)
 USER_FLAG = "--user-approved"
@@ -79,7 +81,41 @@ def summary(text):
     return "Ревью: " + (totals[-1] if totals else "ответ без строки «ИТОГО:»")
 
 
+def handed_back(agent_id):
+    try:
+        return bool(agent_id) and agent_id in HANDBACK.read_text(encoding="utf-8").split()
+    except OSError:
+        return False
+
+
+def remember_handback(agent_id):
+    """Запомнить, что этот ревьюер сдал отчёт передачей (хранятся последние 20 номеров)."""
+    if not agent_id:
+        return
+    try:
+        known = HANDBACK.read_text(encoding="utf-8").split()
+    except OSError:
+        known = []
+    HANDBACK.parent.mkdir(exist_ok=True)
+    HANDBACK.write_text("\n".join((known + [agent_id])[-20:]) + "\n", encoding="utf-8")
+
+
+def answer_text(data):
+    """Текст отчёта ревьюера или None, если это событие не про отчёт reviewer."""
+    if (data.get("agent_type") or "").lower() != "reviewer":
+        return None
+    event = data.get("hook_event_name")
+    if event == "PostToolUse" and data.get("tool_name") == "SubagentHandback":
+        remember_handback(data.get("agent_id"))
+        return str((data.get("tool_input") or {}).get("message") or "")
+    if event == "SubagentStop" and not handed_back(data.get("agent_id")):
+        return data.get("last_assistant_message") or ""
+    return None
+
+
 def main():
+    sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данные в UTF-8, Windows по умолчанию читает cp1251
+    sys.stdout.reconfigure(encoding="utf-8")
     if USER_FLAG in sys.argv:
         mark(work_state.changes_hash())
         show_on_dashboard("Ревью: отметка поставлена вручную — пользователь принял оставшееся «критично»")
@@ -88,11 +124,9 @@ def main():
     if sys.stdin.isatty():
         print("Отметку ставит замок после ответа субагента reviewer. Запусти скилл review.")
         sys.exit(1)
-    data = json.load(sys.stdin)
-    if data.get("hook_event_name") != "SubagentStop" or (data.get("agent_type") or "").lower() != "reviewer":
+    text = answer_text(json.load(sys.stdin))
+    if text is None:
         sys.exit(0)
-
-    text = data.get("last_assistant_message") or ""
     show_on_dashboard(summary(text))
     result = verdict(text)
     if result is None:  # ревью плана или ответ без итога — отметку не трогаем

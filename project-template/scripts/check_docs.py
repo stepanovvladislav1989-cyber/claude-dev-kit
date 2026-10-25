@@ -11,7 +11,7 @@
   5а. Номер в заголовке задачи с латинской буквой («# T-002») — замки и дашборд ищут русскую «Т».
 
 Предупреждения (проверку не валят):
-  6. У правила ПР или инварианта ИНВ пока нет ни одного теста.
+  6. Когда задачи уже нарезаны: у правила ПР или инварианта ИНВ пока нет ни одного теста.
   7. У ТР нет строки «Из брифа: …» или «Источник: …», нет строки «Статус: …»
      статус не из списка: открыто, отложено, снято («в работе» и «сделано» видны по задачам)
      или у «отложено» / «снято» нет причины.
@@ -196,8 +196,10 @@ def main():
         elif statuses[id_] != "открыто" and not re.search(r"\w", m.group(2)):
             warnings.append(f"{id_}: у статуса «{m.group(1)}» нет причины — нужно «{m.group(1)} — почему»")
 
-    names = test_names()
-    for id_ in sorted(defined):
+    # До нарезки задач тестов быть не может — «нет теста» был бы шумом, в котором теряются важные предупреждения
+    has_tickets = any(t.startswith("Т-") for t in defined)
+    names = test_names() if has_tickets else ""
+    for id_ in sorted(defined) if has_tickets else []:
         prefix, num = id_.split("-")
         if prefix not in ("ПР", "ИНВ"):
             continue
@@ -205,7 +207,6 @@ def main():
         if not re.search(rf"(?<![a-zа-яё])({re.escape(id_.lower())}|{latin})(?!\d)", names):  # upr07 — не ПР-07
             warnings.append(f"У {id_} пока нет теста")
 
-    has_tickets = any(t.startswith("Т-") for t in defined)
     for id_ in sorted(defined):
         if has_tickets and id_.startswith("ТР-") and id_ not in in_tickets \
                 and statuses.get(id_) not in ("отложено", "снято"):

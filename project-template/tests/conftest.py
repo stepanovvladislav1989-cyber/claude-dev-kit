@@ -8,11 +8,17 @@
   - если адрес базы есть, а тестового нет, или в тестовом адресе нет слова «test»
     (отдельно: app_test, test.db; «latest» не считается) — тесты не запускаются вовсе, проверка НЕ ПРОШЛА.
 
-Нет базы в проекте (нет ни DATABASE_URL, ни TEST_DATABASE_URL) — ничего не делает.
+Не задан ни DATABASE_URL, ни TEST_DATABASE_URL (нет .env, у программы адрес по умолчанию, например
+SQLite в data/) — DATABASE_URL ставится на пустой временный файл SQLite (sqlite:///…/test.db),
+который удаляется после тестов. Так программа с адресом по умолчанию в тестах не тронет рабочую базу,
+а программа на другой базе (PostgreSQL) упадёт на чужом адресе, а не тихо возьмёт рабочую.
+Программе без базы переменная не мешает.
 Файл — часть настроек проверки: меняется только с разрешения пользователя.
 """
 import os
 import re
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -43,7 +49,8 @@ def pytest_configure(config):
     db_url = setting("DATABASE_URL", file_values)
     test_url = setting("TEST_DATABASE_URL", file_values)
     if not db_url and not test_url:
-        return
+        config.temp_db_dir = tempfile.mkdtemp(prefix="test-db-")
+        test_url = "sqlite:///" + (Path(config.temp_db_dir) / "test.db").as_posix()
     if not test_url:
         pytest.exit("Тесты остановлены: задан адрес рабочей базы DATABASE_URL, но нет TEST_DATABASE_URL. "
                     "Тесты могли бы изменить настоящие данные.", returncode=3)
@@ -54,3 +61,9 @@ def pytest_configure(config):
         pytest.exit("Тесты остановлены: тестовая и рабочая база совпадают.", returncode=3)
     os.environ["APP_ENV"] = "test"
     os.environ["DATABASE_URL"] = test_url
+
+
+def pytest_unconfigure(config):
+    folder = getattr(config, "temp_db_dir", None)
+    if folder:
+        shutil.rmtree(folder, ignore_errors=True)

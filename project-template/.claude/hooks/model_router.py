@@ -34,14 +34,12 @@ sys.stdin.reconfigure(encoding="utf-8")  # Claude Code передаёт данн
 sys.stderr.reconfigure(encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-TICKETS = ROOT / "docs" / "tickets"
 sys.path.insert(0, str(ROOT / "scripts"))
 import work_state  # noqa: E402
 
 WEAK = ("sonnet", "haiku")  # по вхождению: и короткое имя, и полный ID модели (claude-sonnet-…)
 STRONG = ("opus", "fable")
 SEARCH_AGENTS = ("explore", "plan", "claude-code-guide", "statusline-setup")  # не правят файлы
-STATUS_RE = re.compile(r"\*\*Статус:\*\*\s*([^·\n]+)")
 KIND_RE = re.compile(r"\*\*Вид:\*\*\s*([^·\n]+)")
 LEVEL_RE = re.compile(r"\*\*Сложность:\*\*\s*([^·\n]+)")
 
@@ -58,17 +56,12 @@ def field(regex, text):
 def active_ticket():
     """(имя, 💰 ли задача, сложность) у задачи «в работе», иначе на «паузе»; None — такой нет.
     Несколько задач «в работе» — имена через запятую, 💰 и сложность — по самой строгой."""
-    if not TICKETS.is_dir():
+    found = [describe(f, text) for f, text, _ in work_state.active_tickets()]
+    if not found:
         return None
-    files = [(f, work_state.read_doc(f))
-             for f in sorted(TICKETS.glob("*.md")) if not f.name.startswith("_")]
-    for wanted in ("в работе", "пауза"):
-        found = [describe(f, text) for f, text in files if (field(STATUS_RE, text) or "").startswith(wanted)]
-        if found:
-            order = ("низкая", "обычная", "высокая")
-            return (", ".join(n for n, _, _ in found), any(m for _, m, _ in found),
-                    max((lv for _, _, lv in found), key=order.index))
-    return None
+    order = ("низкая", "обычная", "высокая")
+    return (", ".join(n for n, _, _ in found), any(m for _, m, _ in found),
+            max((lv for _, _, lv in found), key=order.index))
 
 
 def describe(f, text):

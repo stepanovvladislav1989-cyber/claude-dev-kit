@@ -93,6 +93,18 @@
             ]
           }
         ]
+      },
+      {
+        "matcher": "SubagentHandback",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/mark_reviewed.py"
+            ]
+          }
+        ]
       }
     ],
     "SubagentStop": [

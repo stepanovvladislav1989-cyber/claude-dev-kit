@@ -25,6 +25,14 @@
 Сообщения коммитов (-m "…", а в git commit — и текст после <<) при поиске опасных команд, обходов, удалений и .env
 не учитываются. Упоминание .env без чтения содержимого — можно: git check-ignore .env,
 git status, Test-Path .env, echo ".env" >> .gitignore.
+Текст, который команда только записывает в файл, тоже не учитывается: тело heredoc у cat > файл и tee файл
+(cat > tests/test_x.py <<'EOF' … import sqlite3 … INSERT … EOF), here-string PowerShell в Set-Content,
+Add-Content, Out-File. Остальное в этой команде (куда пишется файл, что запускается после) проверяется.
+Если записанный файл дальше в той же команде упоминается (bash run.sh, sqlite3 app.db < fix.sql), его текст
+проверяется; кроме файлов .py в src/, scripts/, migrations/, tests/ — их и так запускают без проверки.
+Вывод записи уходит команде (>(…), $(…), (…), -PassThru) — текст тоже проверяется.
+Тело проверяется, если уходит интерпретатору или клиенту базы (python - <<EOF, psql <<EOF, cat <<EOF | sqlite3)
+или подставляет вывод команд ($(…), `…` — у heredoc без кавычек у метки и в here-string @"…"@).
 
 Это защита от случайной ошибки агента, а не от умысла: команду, которая прячет действие
 (запись файла из python -c, обход внутри << …, переменная $env:skip в нижнем регистре),
@@ -147,6 +155,102 @@ def without_messages(cmd):
     cmd = re.sub(r"(\bgit\s+commit\b[^\n;&|]*?)<<-?\s*(['\"]?)(\w+)\2.*?^\s*\3\s*$", r"\1 ", cmd,
                  flags=re.S | re.M | re.I)
     return re.sub(r"(\s-m|--message)(\s+|=)(\"[^\"]*\"|'[^']*'|\S+)", " ", cmd)
+
+
+HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([\w.-]+)\1([^\n]*)\n(.*?)^[ \t]*\2[ \t]*$", re.S | re.M)
+PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n(.*?)\r?\n\1@", re.S)
+PS_WRITE = re.compile(r"(set-content|add-content|out-file|sc|ac)\b", re.I)
+SUBSTITUTION = re.compile(r"\$\(|`")
+
+
+def line_around(cmd, start, end):
+    """Начало строки до start и конец строки после end — там команда, которой отдан текст."""
+    line_start = cmd.rfind("\n", 0, start) + 1
+    line_end = cmd.find("\n", end)
+    return cmd[line_start:start], cmd[end:len(cmd) if line_end < 0 else line_end]
+
+
+def used_later(targets, rest, data):
+    """Записанный файл дальше в той же команде упоминается (запуск: bash run.sh, sqlite3 app.db < fix.sql) —
+    тогда его текст надо проверить. Файлы .py в папках кода проекта (src/, scripts/, migrations/, tests/) — можно:
+    их и так запускают без проверки (python -m pytest tests/agent/test_x.py). Остальные (.sql, .sh, .ps1) —
+    проверяются в любой папке: SQL-файл из scripts/ замок у клиента базы не пропускает."""
+    for target in targets:
+        path = clean_path(target)
+        name = PurePath(path).name.lower()
+        if not name or name not in rest.lower():
+            continue
+        rel = relative_to_project(path, data)
+        if rel is None or not rel.parts or rel.parts[0] not in PROJECT_CODE or not name.endswith(".py"):
+            return True
+    return False
+
+
+def heredoc_to_file(cmd, m, data):
+    """Тело heredoc только пишется в файл: cat > файл <<EOF или tee файл <<EOF, без конвейера дальше,
+    без подстановки команд в теле (у метки без кавычек bash выполняет $(…) и `…`) и без запуска
+    записанного файла следом."""
+    if not m.group(1) and SUBSTITUTION.search(m.group(4)):
+        return False
+    line_before = line_around(cmd, m.start(), m.start())[0]
+    if "<<" in line_before:  # тело достаётся первому heredoc строки, а не этому
+        return False
+    prefix = cmd[:m.start()]
+    if prefix.count("(") > prefix.count(")"):  # внутри $(…) или (…): вывод уходит внешней команде
+        return False
+    if m.group(3).rstrip().endswith("\\"):  # строка продолжается: следующая — ещё команда, а не тело
+        return False
+    before = re.split(r"&&|\|\||[;&|(]", line_before)[-1]
+    after = re.split(r"&&|\|\||[;&]", m.group(3))[0]
+    if "|" in after or re.search(r"[<>]\(", f"{before} {after}"):  # | sqlite3, >(bash) — текст уходит команде
+        return False
+    rest = m.group(3)[len(after):] + cmd[m.end():]
+    words = before.split()
+    segment = HARMLESS_REDIRECTS.sub("", f"{before} {after}")
+    if words and words[0] == "cat":
+        targets = re.findall(r">>?\s*['\"]?([^\s>&('\"]+)", segment)  # >(…) — не файл, а команда
+    elif words and words[0] == "tee":
+        targets = [w for w in words[1:] + after.split() if not w.startswith(("-", ">"))]
+    else:
+        return False
+    if any(clean_path(t).lower().startswith(("/dev/stdout", "/dev/fd", "/proc/self/fd")) for t in targets):
+        return False  # «файл» — это вывод, он уходит дальше
+    return bool(targets) and not used_later(targets, rest, data)
+
+
+def herestring_to_file(cmd, m, data):
+    """Here-string PowerShell только пишется в файл: Set-Content … @'…'@ или @'…'@ | Set-Content …
+    (перед @'…'@ в этой части команды ничего нет), и записанный файл следом не запускается."""
+    if m.group(1) == '"' and SUBSTITUTION.search(m.group(2)):
+        return False
+    before, after = line_around(cmd, m.start(), m.end())
+    rest = after + cmd[m.end() + len(after):]
+    prefix = cmd[:m.start()]
+    if prefix.count("(") > prefix.count(")") or prefix.count("{") > prefix.count("}") \
+            or re.search(r"-passthru\b", before + after, re.I):  # iex (Set-Content … -PassThru …)
+        return False
+    before = re.split(r"[;|({]", before)[-1].split()
+    if before:
+        if not PS_WRITE.fullmatch(before[0]) or (after.strip() and not after.lstrip().startswith(";")):
+            return False
+        return not used_later([w for w in before[1:] if not w.startswith("-")], rest, data)
+    write = re.fullmatch(r"\s*\|\s*" + PS_WRITE.pattern + r"([^|;]*)(;.*)?", after, re.I)
+    if not write:
+        return False
+    # «| Set-Content run.ps1 && ./run.ps1»: файлы — до && или ||, остальное — то, что идёт следом
+    parts = re.split(r"&&|\|\|", write.group(2), maxsplit=1)
+    targets = [w for w in parts[0].split() if not w.startswith("-")]
+    following = (parts[1] if len(parts) > 1 else "") + (write.group(3) or "") + cmd[m.end() + len(after):]
+    return not used_later(targets, following, data)
+
+
+def without_file_texts(cmd, data):
+    """Команда без текста, который она только записывает в файл (heredoc, here-string).
+    Метка и всё вокруг остаются: куда пишется файл и что запускается следом, проверяется как обычно."""
+    cmd = HEREDOC.sub(lambda m: m.group(0)[:m.start(4) - m.start()] + m.group(0)[m.end(4) - m.start():]
+                      if heredoc_to_file(cmd, m, data) else m.group(0), cmd)
+    return PS_HERESTRING.sub(lambda m: f"@{m.group(1)}\n{m.group(1)}@" if herestring_to_file(cmd, m, data)
+                             else m.group(0), cmd)
 
 
 def clean_path(token):
@@ -325,7 +429,7 @@ def main():
         deny("поиск в файле с паролями или ключами")
 
     if tool in SHELL_TOOLS:
-        cmd = inp.get("command", "")
+        cmd = without_file_texts(inp.get("command", ""), data)
         if is_rm_rf(cmd):
             deny("массовое удаление (rm -rf)")
         discard = git_discard(cmd)
