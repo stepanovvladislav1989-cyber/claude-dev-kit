@@ -60,9 +60,11 @@ def guard(root, command, tool="Bash"):
     return "ask" if '"ask"' in out else "ok"
 
 
-def router(root, agent, model=""):
-    data = {"hook_event_name": "PreToolUse", "tool_name": "Agent",
-            "tool_input": {"subagent_type": agent, "model": model, "prompt": "x"}}
+def router(root, agent, model="", harness=""):
+    tool_input = {"subagent_type": agent, "model": model, "prompt": "x"}
+    if harness:
+        tool_input["harness"] = harness  # метка плагина DeepSeek Harness
+    data = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": tool_input}
     code, out = hook(root, ".claude/hooks/model_router.py", data)
     return "deny" if code == 2 else ("ask" if '"ask"' in out else "ok")
 
@@ -173,6 +175,58 @@ def test_dengi_bez_znachka_i_polnye_imena_modeley(tmp_path):
     assert router(root, "reviewer", "claude-sonnet-5-5") == "deny"
     assert router(root, "reviewer", "fable") == "ok"
     assert router(root, "acceptor", "claude-opus-5-5") == "ok"
+
+
+def test_modeli_deepseek_ponimayut_roli(tmp_path):
+    """В DeepSeek Harness две модели: DeepSeek-V4-Pro — сильная, Flash — слабая."""
+    root = project(tmp_path)
+    ticket(root, kind="обычная", level="обычная")
+    assert router(root, "reviewer", "deepseek-v4-pro") == "ok"
+    assert router(root, "acceptor", "deepseek-v4-pro") == "ok"
+    assert router(root, "reviewer", "deepseek-flash") == "deny"
+    assert router(root, "acceptor", "deepseek-flash") == "deny"
+    assert router(root, "implementer", "deepseek-v4-pro") == "ok"
+    assert router(root, "implementer", "deepseek-flash") == "ok"  # обычная задача — Flash годится
+
+
+def test_chuzhaya_model_s_pro_v_imnem_ne_silnaya(tmp_path):
+    """DeepSeek сравнивается точным именем: «deepseek-v4-pro-free» и «v4-pro-turbo» — не сильные."""
+    root = project(tmp_path)
+    ticket(root)
+    assert router(root, "reviewer", "gpt-4-pro") == "deny"
+    assert router(root, "acceptor", "some-pro-model") == "deny"
+    assert router(root, "reviewer", "deepseek-v4-pro-free") == "deny"
+    assert router(root, "acceptor", "v4-pro-turbo") == "deny"
+    assert router(root, "reviewer", "deepseek-v4-pro") == "ok"
+
+
+def test_bez_modeli_revyu_na_flash_zapreshcheno(tmp_path):
+    """В DeepSeek Harness пустой model — это Flash: ревьюер обязан указать сильную модель явно.
+    В Claude Code метки нет, там пустой model — основная модель, запуск разрешён."""
+    root = project(tmp_path)
+    ticket(root)
+    assert router(root, "reviewer", "", "deepseek") == "deny"
+    assert router(root, "acceptor", "", "deepseek") == "deny"
+    assert router(root, "reviewer", "deepseek-v4-pro", "deepseek") == "ok"
+    assert router(root, "reviewer", "") == "ok"
+
+
+def test_flash_ne_pishet_kod_dengi(tmp_path):
+    root = project(tmp_path)
+    ticket(root, kind="💰 деньги", level="обычная")
+    assert router(root, "implementer", "deepseek-flash") == "deny"
+    assert router(root, "general-purpose", "deepseek-flash") == "deny"
+    assert router(root, "general-purpose", "", "deepseek") == "deny"  # без model — Flash
+    assert router(root, "general-purpose", "") == "ok"                # Claude Code: основная модель
+    assert router(root, "reviewer", "deepseek-v4-pro") == "ok"     # сильную модель не понижаем
+    assert router(root, "Explore", "deepseek-flash") == "ok"       # только поиск
+
+
+def test_flash_ne_pishet_kod_vysokoy_slozhnosti(tmp_path):
+    root = project(tmp_path)
+    ticket(root, kind="обычная", level="высокая")
+    assert router(root, "implementer", "deepseek-flash") == "deny"
+    assert router(root, "general-purpose", "deepseek-flash") == "deny"
 
 
 def test_neskolko_zadach_v_rabote_po_samoy_strogoy(tmp_path):

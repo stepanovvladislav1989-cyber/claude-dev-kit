@@ -1,7 +1,8 @@
 """
 Хук PreToolUse на запуск субагента: следит, чтобы модель соответствовала сложности задачи.
 
-Таблица назначений — в глобальных правилах (~/.claude/CLAUDE.md, «Выбор модели»).
+Таблица назначений — в глобальных правилах («Выбор модели»): ~/.dsh/AGENTS.md в DeepSeek Harness,
+~/.claude/CLAUDE.md в Claude Code.
 Этот замок держит её автоматически, по полям задачи со статусом «в работе» или «пауза»:
   **Вид:** 💰 … (или слово «деньги») — деньги и правила;
   **Сложность:** низкая | обычная | высокая.
@@ -12,13 +13,17 @@
 ничего нет. «Отложена», «готово», «новый» — не учитываются.
 
 Запрещает:
-  - ревьюера (reviewer) и приёмщика (acceptor) на любой модели, кроме Opus (или сильнее — Fable),
-    — проверка не понижается никогда;
+  - ревьюера (reviewer) и приёмщика (acceptor) на любой модели, кроме сильной
+    (Claude: Opus или сильнее — Fable; DeepSeek Harness: DeepSeek-V4-Pro),
+    — проверка не понижается никогда. В DeepSeek Harness пустой model — это Flash, поэтому
+    ревьюер, приёмщик и любой агент в 💰-задаче или задаче высокой сложности там обязаны
+    указывать модель явно (плагин ставит метку harness = deepseek);
   - исполнителя (implementer) в 💰-задаче или задаче высокой сложности —
-    такой код пишет основной агент на Opus;
-  - исполнителя на Haiku, если сложность не «низкая»;
+    такой код пишет основной агент на сильной модели;
+  - исполнителя на Haiku, если сложность не «низкая» (в DeepSeek Harness пары к Haiku нет:
+    Flash — это модель обычного кода, как Sonnet);
   - в 💰-задаче или задаче высокой сложности — любого другого агента, который может править файлы,
-    на Sonnet или Haiku (обход через general-purpose). Агенты только для поиска (Explore и др.) — можно.
+    на Sonnet, Haiku или DeepSeek Flash (обход через general-purpose). Агенты только для поиска (Explore и др.) — можно.
 Повышать модель можно всегда. Нет задачи «в работе» — исполнителя не ограничиваем.
 Сбой самого замка — вопрос пользователю, а не молчаливый пропуск.
 
@@ -37,8 +42,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import work_state  # noqa: E402
 
-WEAK = ("sonnet", "haiku")  # по вхождению: и короткое имя, и полный ID модели (claude-sonnet-…)
-STRONG = ("opus", "fable")
+WEAK = ("sonnet", "haiku", "flash")  # по вхождению: короткое имя и полный ID (claude-sonnet-…, deepseek-flash)
+# Сильные: у Claude — по вхождению (id бывают с версиями, claude-opus-5-5); у DeepSeek — точным именем:
+# «pro» в куске имени ничего не значит, а выдуманный id («deepseek-v4-pro-free») не должен считаться сильным.
+CLAUDE_STRONG = ("opus", "fable")
+DEEPSEEK_STRONG = ("deepseek-v4-pro",)
 SEARCH_AGENTS = ("explore", "plan", "claude-code-guide", "statusline-setup")  # не правят файлы
 KIND_RE = re.compile(r"\*\*Вид:\*\*\s*([^·\n]+)")
 LEVEL_RE = re.compile(r"\*\*Сложность:\*\*\s*([^·\n]+)")
@@ -79,7 +87,8 @@ def describe(f, text):
 
 def deny(reason):
     print(f"ЗАПРЕЩЕНО замком выбора модели: {reason}. "
-          "Таблица назначений — «Выбор модели» в ~/.claude/CLAUDE.md.", file=sys.stderr)
+          "Таблица назначений — «Выбор модели» в глобальных правилах "
+          "(~/.dsh/AGENTS.md в DeepSeek Harness, ~/.claude/CLAUDE.md в Claude Code).", file=sys.stderr)
     sys.exit(2)
 
 
@@ -87,12 +96,25 @@ def is_weak(model):
     return any(w in model for w in WEAK)
 
 
-def check(inp):
-    agent = (inp.get("subagent_type") or "").lower()
-    model = (inp.get("model") or "").lower()
+def is_strong(model):
+    return model in DEEPSEEK_STRONG or any(s in model for s in CLAUDE_STRONG)
 
-    if agent in ("reviewer", "acceptor") and model and not any(s in model for s in STRONG):
-        deny(f"{agent} на модели {model}. Ревью и приёмка — только Opus: не передавай model или передай opus")
+
+def check(inp):
+    agent = (inp.get("subagent_type") or "").strip().lower()
+    model = (inp.get("model") or "").strip().lower()
+    # Метку ставит плагин DeepSeek Harness. В Claude Code её нет: там пустой model — основная модель
+    # (обычно сильная), а в DeepSeek Harness основной сессией правит Flash, то есть пусто = слабая.
+    harness = (inp.get("harness") or "").strip().lower()
+    no_model_is_weak = harness == "deepseek"
+
+    if agent in ("reviewer", "acceptor"):
+        if model and not is_strong(model):
+            deny(f"{agent} на модели {model}. Ревью и приёмка — только сильная модель "
+                 "(Opus, Fable, DeepSeek-V4-Pro): не передавай слабую")
+        if not model and no_model_is_weak:
+            deny(f"{agent} без указания model: в DeepSeek Harness это Flash, слабая модель. "
+                 "Передай модель явно: deepseek-v4-pro")
 
     if agent != "reviewer" and agent != "acceptor" and agent not in SEARCH_AGENTS:
         ticket = active_ticket()
@@ -101,12 +123,12 @@ def check(inp):
             strict = money or level == "высокая"
             why = "💰-задача" if money else "высокая сложность"
             if agent == "implementer" and strict:
-                deny(f"{name}: {why} — код пишет основной агент на Opus, не implementer")
+                deny(f"{name}: {why} — код пишет основной агент на сильной модели, не implementer")
             if agent == "implementer" and "haiku" in model and level != "низкая":
-                deny(f"{name}: Haiku только для низкой сложности, здесь «{level}». Используй sonnet")
-            if agent != "implementer" and strict and is_weak(model):
-                deny(f"{name}: {why} — агент {agent or 'general-purpose'} на {model} может писать код; "
-                     "такой код пишет основной агент на Opus")
+                deny(f"{name}: Haiku только для низкой сложности, здесь «{level}». Используй сильную модель")
+            if agent != "implementer" and strict and (is_weak(model) or (not model and no_model_is_weak)):
+                deny(f"{name}: {why} — агент {agent or 'general-purpose'} на {model or 'модели по умолчанию (Flash)'} "
+                     "может писать код; такой код пишет основной агент на сильной модели")
     return agent, model
 
 
